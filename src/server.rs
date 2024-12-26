@@ -101,8 +101,9 @@ fn sexp_graph<'g>() -> StringTaggedSyntaxGraph<'g> {
     vec![("", "(", ")"), ("bracket", "[", "]")],
     vec![
       ("quote", "'", 0, 1),
-      //("question", "?", 1, 0),
-      //("colon", ":", 1, 1)
+      ("meta", "^", 0, 2),
+      ("question", "?", 1, 0),
+      ("colon", ":", 1, 1),
     ],
   )
 }
@@ -144,7 +145,15 @@ impl LanguageServer for Backend {
     &self,
     params: ExecuteCommandParams,
   ) -> Result<Option<Value>> {
-    match params.command.as_str() {
+    self
+      .client
+      .log_message(
+        MessageType::INFO,
+        format!("executing {}", params.command.as_str()),
+      )
+      .await;
+    let params_clone = params.clone();
+    let return_value = match params.command.as_str() {
       "expandSelection" => self.selection_command(
         params,
         "expandSelection",
@@ -186,16 +195,28 @@ impl LanguageServer for Backend {
         },
       ),
       _ => Err(Error::method_not_found()),
-    }
+    };
+    self
+      .client
+      .log_message(
+        MessageType::INFO,
+        format!("finished executing {}", params_clone.command.as_str()),
+      )
+      .await;
+    return_value
   }
 
   async fn did_open(&self, params: DidOpenTextDocumentParams) {
     let uri = params.text_document.uri.to_string();
     let text = params.text_document.text;
     match self.documents.write() {
-      Ok(mut docs) => docs.insert(uri, text),
+      Ok(mut docs) => docs.insert(uri.clone(), text),
       Err(e) => panic!("did_open failed: {e:?}"),
     };
+    self
+      .client
+      .log_message(MessageType::INFO, format!("opened {uri}"))
+      .await;
   }
 
   async fn did_change(&self, params: DidChangeTextDocumentParams) {

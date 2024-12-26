@@ -24,7 +24,7 @@
     "keybindings": [
       {
         "command": "extension.expandSelection",
-        "key": "ctrl+e",
+        "key": "ctrl+w",
         "when": "editorTextFocus"
       },
       {
