@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::RwLock};
 
 use serde_json::Value;
 use sse::{
+  formatting::{Formatter, FormattingStyle},
   str_tagged::{StringTaggedDocument, StringTaggedSyntaxGraph},
   Parser,
 };
@@ -9,10 +10,11 @@ use tower_lsp::{
   jsonrpc::{Error, Result},
   lsp_types::{
     DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, ExecuteCommandOptions, ExecuteCommandParams,
-    InitializeParams, InitializeResult, InitializedParams, MessageType,
-    ServerCapabilities, TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind,
+    DidOpenTextDocumentParams, DocumentFormattingParams, ExecuteCommandOptions,
+    ExecuteCommandParams, InitializeParams, InitializeResult,
+    InitializedParams, MessageType, OneOf, ServerCapabilities,
+    TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextEdit,
   },
   Client, LanguageServer,
 };
@@ -121,6 +123,7 @@ impl LanguageServer for Backend {
             "expandSelection".to_string(),
             "moveCursorToStart".to_string(),
             "moveCursorToEnd".to_string(),
+            "formatDocument".to_string(),
           ],
           work_done_progress_options: Default::default(),
         }),
@@ -184,7 +187,7 @@ impl LanguageServer for Backend {
       ),
       "moveCursorToEnd" => self.selection_command(
         params,
-        "moveCursorToEnd",
+        "moveCursorToStart",
         |document, start_index, end_index| {
           let (start_row, start_col) = document
             .index_to_row_and_col(
@@ -194,6 +197,38 @@ impl LanguageServer for Backend {
           Ok(Some(serde_json::to_value([start_row, start_col]).unwrap()))
         },
       ),
+      "formatDocument" => {
+        let uri = params.arguments[0].as_str().unwrap().to_string();
+        match self.documents.read() {
+          Ok(docs) => {
+            let text = docs
+              .get(&uri)
+              .expect(&format!("didn't have data for document {}", uri));
+            match TryInto::<StringTaggedDocument>::try_into(Parser::new(
+              sexp_graph(),
+              text,
+            )) {
+              Ok(document) => {
+                if let Ok(formatted) =
+                  document.format(&Formatter::new_with_default_style(
+                    FormattingStyle::MultiLineAlignedToSecond {
+                      single_line_threshold: 12,
+                    },
+                  ))
+                {
+                  Ok(Some(serde_json::to_value(formatted).unwrap()))
+                } else {
+                  Ok(None)
+                }
+              }
+              Err(_) => Ok(None),
+            }
+          }
+          Err(e) => {
+            panic!("formatDocument failed to read document: {e:?}")
+          }
+        }
+      }
       _ => Err(Error::method_not_found()),
     };
     self

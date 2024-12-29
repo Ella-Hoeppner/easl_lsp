@@ -94,8 +94,39 @@ async function moveCursorToEnd() {
   }
 }
 
+async function formatDocument() {
+  const editor = vscode.window.activeTextEditor;
+  if (editor) {
+    try {
+      const result = await vscode.commands.executeCommand(
+        'formatDocument',
+        editor.document.uri.toString()
+      ) as string | undefined | null;
+      if (result !== undefined && result !== null) {
+        editor.edit(editBuilder => {
+          editBuilder.replace(
+            new vscode.Range(
+              new vscode.Position(0, 0),
+              editor.document.lineAt(editor.document.lineCount - 1).range.end
+            ),
+            result
+          )
+        });
+      } else {
+        console.error('result was undefined');
+      }
+    } catch (error) {
+      console.error('Error calling custom LSP command:', error);
+    }
+  }
+}
+
 export function activate(context: vscode.ExtensionContext) {
-  const serverPath = path.join(__dirname, '..', '..', '..', 'target', 'debug', 'sse_lsp');
+  const outputChannel = vscode.window.createOutputChannel("SSE Language Client");
+  outputChannel.show();
+  outputChannel.appendLine('SSE Language Server activating...');
+
+  const serverPath = path.join(__dirname, 'sse_lsp');
 
   const runOptions: Executable = { command: serverPath, transport: TransportKind.stdio };
   const debugOptions: Executable = { command: serverPath, transport: TransportKind.stdio, args: ['--nolazy', '--inspect=6009'] };
@@ -109,15 +140,46 @@ export function activate(context: vscode.ExtensionContext) {
     documentSelector: [{ scheme: 'file', language: 'sse' }],
   };
 
+  // Register the cursor and selection commands
   for (let [commandName, commandHandler] of
     [['extension.moveCursorToStart', moveCursorToStart],
-     ['extension.moveCursorToEnd', moveCursorToEnd],
-     ['extension.expandSelection', expandSelection],
+    ['extension.moveCursorToEnd', moveCursorToEnd],
+    ['extension.expandSelection', expandSelection],
     ] as const) {
     context.subscriptions.push(
       vscode.commands.registerCommand(commandName, commandHandler)
     );
   }
+
+  // Register the formatting provider
+  context.subscriptions.push(
+    vscode.languages.registerDocumentFormattingEditProvider('sse', {
+      async provideDocumentFormattingEdits(
+        document: vscode.TextDocument,
+        options: vscode.FormattingOptions
+      ): Promise<vscode.TextEdit[]> {
+        try {
+          const result = await vscode.commands.executeCommand(
+            'formatDocument',
+            document.uri.toString()
+          ) as string | undefined | null;
+
+          if (result !== undefined && result !== null) {
+            return [new vscode.TextEdit(
+              new vscode.Range(
+                new vscode.Position(0, 0),
+                document.lineAt(document.lineCount - 1).range.end
+              ),
+              result
+            )];
+          }
+        } catch (error) {
+          console.error('Error formatting document:', error);
+        }
+        return [];
+      }
+    })
+  );
 
   client = new LanguageClient(
     'sseLanguageServer',
