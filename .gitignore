@@ -3,3 +3,4 @@
 /vscode_client/sse-language-client/out
 /vscode_client/sse-language-client/node_modules
 */.DS_Store
+.DS_Store

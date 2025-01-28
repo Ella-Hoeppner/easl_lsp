@@ -1,20 +1,19 @@
 use std::{collections::HashMap, sync::RwLock};
 
-use serde_json::Value;
-use sse::{
-  formatting::{Formatter, FormattingStyle},
-  str_tagged::{StringTaggedDocument, StringTaggedSyntaxGraph},
-  Parser,
+use easl::{
+  compiler::program::EaslDocument, format::format_document,
+  parse::easl_syntax_graph,
 };
+use serde_json::Value;
+use sse::{str_tagged::StringTaggedSyntaxGraph, Parser};
 use tower_lsp::{
   jsonrpc::{Error, Result},
   lsp_types::{
     DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentFormattingParams, ExecuteCommandOptions,
-    ExecuteCommandParams, InitializeParams, InitializeResult,
-    InitializedParams, MessageType, OneOf, ServerCapabilities,
-    TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextEdit,
+    DidOpenTextDocumentParams, ExecuteCommandOptions, ExecuteCommandParams,
+    InitializeParams, InitializeResult, InitializedParams, MessageType,
+    ServerCapabilities, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind,
   },
   Client, LanguageServer,
 };
@@ -39,7 +38,7 @@ impl Backend {
     &self,
     params: ExecuteCommandParams,
     name: &str,
-    f: impl Fn(StringTaggedDocument, usize, usize) -> Result<Option<Value>>,
+    f: impl Fn(EaslDocument, usize, usize) -> Result<Option<Value>>,
   ) -> Result<Option<Value>> {
     if params.arguments.len() == 1 {
       if let Some((selection_start_params, selection_end_params)) =
@@ -55,8 +54,8 @@ impl Backend {
             let text = docs
               .get(&uri)
               .expect(&format!("didn't have data for document {}", uri));
-            let document: StringTaggedDocument =
-              Parser::new(sexp_graph(), text).try_into().unwrap();
+            let document: EaslDocument =
+              Parser::new(easl_syntax_graph(), text).try_into().unwrap();
             let document_start_index = document
               .row_and_col_to_index(
                 selection_start_params.position.line as usize,
@@ -204,23 +203,13 @@ impl LanguageServer for Backend {
             let text = docs
               .get(&uri)
               .expect(&format!("didn't have data for document {}", uri));
-            match TryInto::<StringTaggedDocument>::try_into(Parser::new(
-              sexp_graph(),
+            match TryInto::<EaslDocument>::try_into(Parser::new(
+              easl_syntax_graph(),
               text,
             )) {
-              Ok(document) => {
-                if let Ok(formatted) =
-                  document.format(&Formatter::new_with_default_style(
-                    FormattingStyle::MultiLineAlignedToSecond {
-                      single_line_threshold: 12,
-                    },
-                  ))
-                {
-                  Ok(Some(serde_json::to_value(formatted).unwrap()))
-                } else {
-                  Ok(None)
-                }
-              }
+              Ok(document) => Ok(Some(
+                serde_json::to_value(format_document(document)).unwrap(),
+              )),
               Err(_) => Ok(None),
             }
           }

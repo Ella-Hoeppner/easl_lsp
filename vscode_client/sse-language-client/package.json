@@ -11,13 +11,9 @@
     "type": "git",
     "url": "https://github.com/Ella-Hoeppner/SSE-language-server"
   },
-  "categories": [
-    "Programming Languages"
-  ],
+  "categories": ["Programming Languages"],
   "main": "./out/extension.js",
-  "activationEvents": [
-    "onLanguage:sse"
-  ],
+  "activationEvents": ["onLanguage:sse"],
   "contributes": {
     "commands": [
       {
@@ -48,28 +44,23 @@
         "command": "extension.moveCursorToEnd",
         "key": "ctrl+d",
         "when": "editorTextFocus"
+      },
+      {
+        "command": "extension.handleBackspace",
+        "key": "backspace",
+        "when": "editorTextFocus && editorLangId == sse"
       }
     ],
     "languages": [
       {
         "id": "sse",
-        "aliases": [
-          "SSE",
-          "sse"
-        ],
-        "extensions": [
-          ".sse",
-          ".easl"
-        ],
+        "aliases": ["SSE", "sse"],
+        "extensions": [".sse", ".easl"],
         "configuration": "./language-configuration.json"
       }
     ]
   },
-  "files": [
-    "LICENSE.md",
-    "language-configuration.json",
-    "out/**/*"
-  ],
+  "files": ["LICENSE.md", "language-configuration.json", "out/**/*"],
   "scripts": {
     "build": "webpack --mode production && node build.js",
     "vscode:prepublish": "npm run build"

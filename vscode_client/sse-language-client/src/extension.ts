@@ -94,38 +94,7 @@ async function moveCursorToEnd() {
   }
 }
 
-async function formatDocument() {
-  const editor = vscode.window.activeTextEditor;
-  if (editor) {
-    try {
-      const result = await vscode.commands.executeCommand(
-        'formatDocument',
-        editor.document.uri.toString()
-      ) as string | undefined | null;
-      if (result !== undefined && result !== null) {
-        editor.edit(editBuilder => {
-          editBuilder.replace(
-            new vscode.Range(
-              new vscode.Position(0, 0),
-              editor.document.lineAt(editor.document.lineCount - 1).range.end
-            ),
-            result
-          )
-        });
-      } else {
-        console.error('result was undefined');
-      }
-    } catch (error) {
-      console.error('Error calling custom LSP command:', error);
-    }
-  }
-}
-
 export function activate(context: vscode.ExtensionContext) {
-  const outputChannel = vscode.window.createOutputChannel("SSE Language Client");
-  outputChannel.show();
-  outputChannel.appendLine('SSE Language Server activating...');
-
   const serverPath = path.join(__dirname, 'sse_lsp');
 
   const runOptions: Executable = { command: serverPath, transport: TransportKind.stdio };
@@ -180,6 +149,52 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   );
+
+  // Register the type command handler
+  context.subscriptions.push(
+    vscode.commands.registerCommand('type', async args => {
+      let text = args.text;
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || editor.document.languageId !== 'sse') {
+        await vscode.commands.executeCommand('default:type', { text });
+        return;
+      }
+
+      const position = editor.selection.active;
+
+      if (text == "(") {
+        await editor.edit(editBuilder => {
+          editBuilder.insert(position, "()");
+        });
+        const newPosition = position.translate(0, 1);
+        editor.selection = new vscode.Selection(newPosition, newPosition);
+        return;
+      }
+
+      await vscode.commands.executeCommand('default:type', { text });
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('extension.handleBackspace', async () => {
+      console.log("backspace");
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || editor.document.languageId !== 'sse') {
+        await vscode.commands.executeCommand('deleteLeft');
+        return;
+      }
+
+      const position = editor.selection.active;
+      const line = editor.document.lineAt(position.line);
+      const nextChar = line.text[Math.max(0, position.character - 1)];
+
+      if (position == editor.selection.anchor && (nextChar == ")" || nextChar == "(")) {
+        const newPosition = position.translate(0, -1);
+        editor.selection = new vscode.Selection(newPosition, newPosition);
+      } else {
+        await vscode.commands.executeCommand('deleteLeft');
+      }
+    }));
 
   client = new LanguageClient(
     'sseLanguageServer',
