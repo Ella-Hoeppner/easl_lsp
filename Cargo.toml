@@ -9,6 +9,8 @@ sse = { git = "https://github.com/Ella-Hoeppner/SSE.git" }
 tokio = { version = "1.38.0", features = ["rt-multi-thread", "io-std", "macros", "io-util"] }
 easl = { git = "https://github.com/Ella-Hoeppner/easl.git" }
 tower-lsp = "0.20.0"
+unicode-segmentation = "1.11.0"
+regex = "1.11.1"
 
 [[bin]]
 name = "sse_lsp"

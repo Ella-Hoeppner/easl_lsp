@@ -94,6 +94,27 @@ async function moveCursorToEnd() {
   }
 }
 
+export class DocumentSemanticTokensProvider implements vscode.DocumentSemanticTokensProvider {
+  async provideDocumentSemanticTokens(document: vscode.TextDocument): Promise<vscode.SemanticTokens> {
+    console.log("provideDocumentSemanticTokens");
+    const builder = new vscode.SemanticTokensBuilder();
+    const result = await vscode.commands.executeCommand(
+      'colorDocument',
+      document.uri.toString()
+    ) as [[number, number, number, number, number]];
+    for (let [line, pos, len, type, modifier] of result) {
+      builder.push(
+        line,
+        pos,
+        len,
+        type,
+        modifier
+      );
+    }
+    return builder.build();
+  }
+}
+
 export function activate(context: vscode.ExtensionContext) {
   const serverPath = path.join(__dirname, 'sse_lsp');
 
@@ -160,14 +181,25 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      const position = editor.selection.active;
-
-      if (text == "(") {
-        await editor.edit(editBuilder => {
-          editBuilder.insert(position, "()");
-        });
-        const newPosition = position.translate(0, 1);
-        editor.selection = new vscode.Selection(newPosition, newPosition);
+      let match = [["(", ")"], ["[", "]"], ["{", "}"]].find(pair => text == pair[0]);
+      if (match) {
+        let { start, end } = editor.selection;
+        if (start.isEqual(end)) {
+          await editor.edit(editBuilder => {
+            editBuilder.insert(start, match[0] + match[1]);
+          });
+          const newPosition = start.translate(0, 1);
+          editor.selection = new vscode.Selection(newPosition, newPosition);
+        } else {
+          await editor.edit(editBuilder => {
+            editBuilder.insert(end, match[1]);
+            editBuilder.insert(start, match[0]);
+          });
+          editor.selection = new vscode.Selection(
+            start.translate(0, 1),
+            end.translate(0, 0)
+          );
+        }
         return;
       }
 
@@ -177,7 +209,6 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.handleBackspace', async () => {
-      console.log("backspace");
       const editor = vscode.window.activeTextEditor;
       if (!editor || editor.document.languageId !== 'sse') {
         await vscode.commands.executeCommand('deleteLeft');
@@ -195,6 +226,45 @@ export function activate(context: vscode.ExtensionContext) {
         await vscode.commands.executeCommand('deleteLeft');
       }
     }));
+
+  context.subscriptions.push(
+    vscode.languages.registerDocumentSemanticTokensProvider(
+      { language: "sse" },
+      new DocumentSemanticTokensProvider(),
+      {
+        tokenTypes: [
+          "comment",
+          "keyword",
+          "number",
+          "operator",
+          "encloser0",
+          "encloser1",
+          "encloser2",
+          "encloser3",
+          "encloser4",
+          "encloser5",
+          "encloser6",
+        ],
+        tokenModifiers: []
+      }
+    )
+  );
+
+  vscode.workspace.getConfiguration().update(
+    'editor.semanticTokenColorCustomizations',
+    {
+      rules: {
+        'encloser0': '#FFFFFF',
+        'encloser1': '#FF6666',
+        'encloser2': '#88FF88',
+        'encloser3': '#8888FF',
+        'encloser4': '#FFFF88',
+        'encloser5': '#88FFFF',
+        'encloser6': '#FF88FF',
+      }
+    },
+    true
+  );
 
   client = new LanguageClient(
     'sseLanguageServer',

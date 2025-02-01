@@ -1,9 +1,11 @@
 use std::{collections::HashMap, sync::RwLock};
 
 use easl::{
-  compiler::program::EaslDocument, format::format_document,
-  parse::easl_syntax_graph,
+  compiler::program::EaslDocument,
+  format::format_document,
+  parse::{easl_syntax_graph, Encloser, Operator},
 };
+use regex::Regex;
 use serde_json::Value;
 use sse::{str_tagged::StringTaggedSyntaxGraph, Parser};
 use tower_lsp::{
@@ -17,6 +19,27 @@ use tower_lsp::{
   },
   Client, LanguageServer,
 };
+
+#[derive(Clone)]
+enum SyntaxColorMode {
+  Commented,
+  Keyword,
+  Number,
+  Operator,
+  Encloser(usize),
+}
+
+impl SyntaxColorMode {
+  fn encode(self) -> usize {
+    match self {
+      SyntaxColorMode::Commented => 0,
+      SyntaxColorMode::Keyword => 1,
+      SyntaxColorMode::Number => 2,
+      SyntaxColorMode::Operator => 3,
+      SyntaxColorMode::Encloser(depth) => 4 + (depth.rem_euclid(7)),
+    }
+  }
+}
 
 #[derive(Debug)]
 pub struct Backend {
@@ -123,6 +146,7 @@ impl LanguageServer for Backend {
             "moveCursorToStart".to_string(),
             "moveCursorToEnd".to_string(),
             "formatDocument".to_string(),
+            "colorDocument".to_string(),
           ],
           work_done_progress_options: Default::default(),
         }),
@@ -209,6 +233,87 @@ impl LanguageServer for Backend {
             )) {
               Ok(document) => Ok(Some(
                 serde_json::to_value(format_document(document)).unwrap(),
+              )),
+              Err(_) => Ok(None),
+            }
+          }
+          Err(e) => {
+            panic!("formatDocument failed to read document: {e:?}")
+          }
+        }
+      }
+      "colorDocument" => {
+        let uri = params.arguments[0].as_str().unwrap().to_string();
+        match self.documents.read() {
+          Ok(docs) => {
+            let text = docs
+              .get(&uri)
+              .expect(&format!("didn't have data for document {}", uri));
+            match TryInto::<EaslDocument>::try_into(Parser::new(
+              easl_syntax_graph(),
+              text,
+            )) {
+              Ok(document) => Ok(Some(
+                document
+                  .gather_annotations(
+                    (false, 0),
+                    &|leaf: &str, (commented, depth)| {
+                      if *commented {
+                        Some(SyntaxColorMode::Commented)
+                      } else {
+                        ["let", "defn", "def", "var"]
+                          .contains(&leaf)
+                          .then(|| SyntaxColorMode::Keyword)
+                          .or_else(|| {
+                            Regex::new(r"^\d+(\.\d+)?[iuf]?$")
+                              .unwrap()
+                              .is_match(leaf)
+                              .then(|| SyntaxColorMode::Number)
+                          })
+                      }
+                    },
+                    &|_: &Encloser, (commented, depth)| {
+                      (
+                        (*commented, depth + 1),
+                        if *commented {
+                          Some(SyntaxColorMode::Commented)
+                        } else {
+                          Some(SyntaxColorMode::Encloser(*depth))
+                        },
+                      )
+                    },
+                    &|operator: &Operator, (commented, depth)| {
+                      if *operator == Operator::ExpressionComment {
+                        ((true, *depth), None)
+                      } else {
+                        (
+                          (*commented, *depth),
+                          if *commented {
+                            Some(SyntaxColorMode::Commented)
+                          } else {
+                            Some(SyntaxColorMode::Operator)
+                          },
+                        )
+                      }
+                    },
+                  )
+                  .into_iter()
+                  .filter_map(|(span, annotation)| {
+                    if let Ok((line, col)) =
+                      document.index_to_row_and_col(span.start)
+                    {
+                      Some([
+                        line,
+                        col,
+                        span.end - span.start,
+                        annotation.encode(),
+                        0,
+                      ])
+                    } else {
+                      None
+                    }
+                  })
+                  .collect(),
               )),
               Err(_) => Ok(None),
             }
