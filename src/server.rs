@@ -1,7 +1,11 @@
 use std::{collections::HashMap, sync::RwLock};
 
 use easl::{
-  compiler::program::EaslDocument,
+  compiler::{
+    builtins::built_in_macros,
+    program::{EaslDocument, Program},
+    types::TypeState,
+  },
   format::format_document,
   parse::{easl_syntax_graph, Encloser, Operator},
 };
@@ -147,6 +151,7 @@ impl LanguageServer for Backend {
             "moveCursorToEnd".to_string(),
             "formatDocument".to_string(),
             "colorDocument".to_string(),
+            "getTypeInfo".to_string(),
           ],
           work_done_progress_options: Default::default(),
         }),
@@ -171,6 +176,7 @@ impl LanguageServer for Backend {
     &self,
     params: ExecuteCommandParams,
   ) -> Result<Option<Value>> {
+    let mut extra_messages = vec![];
     self
       .client
       .log_message(
@@ -323,6 +329,90 @@ impl LanguageServer for Backend {
           }
         }
       }
+      "getTypeInfo" => {
+        let uri = params.arguments[0].as_str().unwrap().to_string();
+        let row = params.arguments[1].as_u64().unwrap() as usize;
+        let col = params.arguments[2].as_u64().unwrap() as usize;
+        match self.documents.read() {
+          Ok(docs) => {
+            let text = docs
+              .get(&uri)
+              .expect(&format!("didn't have data for document {}", uri));
+            match TryInto::<EaslDocument>::try_into(Parser::new(
+              easl_syntax_graph(),
+              text,
+            )) {
+              Ok(document) => {
+                let char_index =
+                  document.row_and_col_to_index(row, col).unwrap();
+                match Program::from_easl_document(&document, built_in_macros())
+                {
+                  Ok(mut program) => {
+                    if let Err(err) = program.process_raw_program() {
+                      extra_messages.push(format!("{err:#?}"));
+                    }
+                    extra_messages.push(format!(
+                      "{:#?}",
+                      program.gather_type_annotations()
+                    ));
+                    if let Some((_, best_annotation)) =
+                      program.gather_type_annotations().into_iter().fold(
+                        None,
+                        |best: Option<(usize, TypeState)>,
+                         (source_trace, typestate)| {
+                          if let Some(span_length) = source_trace
+                            .all_document_positions()
+                            .into_iter()
+                            .filter_map(|pos| {
+                              pos
+                                .span
+                                .contains(&char_index)
+                                .then(|| pos.span.len())
+                            })
+                            .min()
+                          {
+                            if let Some((best_length, ref best_typestate)) =
+                              best
+                            {
+                              if span_length < best_length
+                                || (!best_typestate.check_is_fully_known()
+                                  && typestate.check_is_fully_known())
+                              {
+                                Some((span_length, typestate))
+                              } else {
+                                best
+                              }
+                            } else {
+                              Some((span_length, typestate))
+                            }
+                          } else {
+                            best
+                          }
+                        },
+                      )
+                    {
+                      if let TypeState::Known(t) = best_annotation {
+                        Ok(Some(t.display_name().into()))
+                      } else {
+                        Ok(Some(
+                          format!("not Known: {:?}", best_annotation).into(),
+                        ))
+                      }
+                    } else {
+                      Ok(None)
+                    }
+                  }
+                  Err(_) => Ok(None),
+                }
+              }
+              Err(_) => Ok(None),
+            }
+          }
+          Err(e) => {
+            panic!("formatDocument failed to read document: {e:?}")
+          }
+        }
+      }
       _ => Err(Error::method_not_found()),
     };
     self
@@ -332,6 +422,12 @@ impl LanguageServer for Backend {
         format!("finished executing {}", params_clone.command.as_str()),
       )
       .await;
+    for extra_message in extra_messages {
+      self
+        .client
+        .log_message(MessageType::INFO, format!("{}", extra_message))
+        .await;
+    }
     return_value
   }
 

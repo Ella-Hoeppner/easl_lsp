@@ -10,6 +10,29 @@ import {
 
 let client: LanguageClient;
 
+export class TypeHoverProvider implements vscode.HoverProvider {
+  async provideHover(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    token: vscode.CancellationToken
+  ): Promise<vscode.Hover | null> {
+    const result = await vscode.commands.executeCommand(
+      'getTypeInfo',
+      document.uri.toString(),
+      position.line,
+      position.character
+    ) as string | undefined;
+    if (!result) return null;
+
+    const range = new vscode.Range(position, position);
+
+    return new vscode.Hover([
+      new vscode.MarkdownString(result)
+    ], range);
+  }
+}
+
+
 function selectionPositions(editor: vscode.TextEditor) {
   const selection = editor.selection;
   return [{
@@ -247,6 +270,13 @@ export function activate(context: vscode.ExtensionContext) {
         ],
         tokenModifiers: []
       }
+    )
+  );
+
+  context.subscriptions.push(
+    vscode.languages.registerHoverProvider(
+      'sse',
+      new TypeHoverProvider()
     )
   );
 
