@@ -15,9 +15,10 @@ use sse::{str_tagged::StringTaggedSyntaxGraph, Parser};
 use tower_lsp::{
   jsonrpc::{Error, Result},
   lsp_types::{
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, ExecuteCommandOptions, ExecuteCommandParams,
-    InitializeParams, InitializeResult, InitializedParams, MessageType,
+    Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    ExecuteCommandOptions, ExecuteCommandParams, InitializeParams,
+    InitializeResult, InitializedParams, MessageType, Position, Range,
     ServerCapabilities, TextDocumentPositionParams, TextDocumentSyncCapability,
     TextDocumentSyncKind,
   },
@@ -345,64 +346,49 @@ impl LanguageServer for Backend {
               Ok(document) => {
                 let char_index =
                   document.row_and_col_to_index(row, col).unwrap();
-                match Program::from_easl_document(&document, built_in_macros())
-                {
-                  Ok(mut program) => {
-                    if let Err(err) = program.process_raw_program() {
-                      extra_messages.push(format!("{err:#?}"));
-                    }
-                    extra_messages.push(format!(
-                      "{:#?}",
-                      program.gather_type_annotations()
-                    ));
-                    if let Some((_, best_annotation)) =
-                      program.gather_type_annotations().into_iter().fold(
-                        None,
-                        |best: Option<(usize, TypeState)>,
-                         (source_trace, typestate)| {
-                          if let Some(span_length) = source_trace
-                            .all_document_positions()
-                            .into_iter()
-                            .filter_map(|pos| {
-                              pos
-                                .span
-                                .contains(&char_index)
-                                .then(|| pos.span.len())
-                            })
-                            .min()
+                let (mut program, _) =
+                  Program::from_easl_document(&document, built_in_macros());
+                if let Err(err) = program.validate_raw_program() {
+                  extra_messages.push(format!("{err:#?}"));
+                }
+                if let Some((_, best_annotation)) =
+                  program.gather_type_annotations().into_iter().fold(
+                    None,
+                    |best: Option<(usize, TypeState)>,
+                     (source_trace, typestate)| {
+                      if let Some(span_length) = source_trace
+                        .all_document_positions()
+                        .into_iter()
+                        .filter_map(|pos| {
+                          pos.span.contains(&char_index).then(|| pos.span.len())
+                        })
+                        .min()
+                      {
+                        if let Some((best_length, ref best_typestate)) = best {
+                          if span_length < best_length
+                            || (!best_typestate.check_is_fully_known()
+                              && typestate.check_is_fully_known())
                           {
-                            if let Some((best_length, ref best_typestate)) =
-                              best
-                            {
-                              if span_length < best_length
-                                || (!best_typestate.check_is_fully_known()
-                                  && typestate.check_is_fully_known())
-                              {
-                                Some((span_length, typestate))
-                              } else {
-                                best
-                              }
-                            } else {
-                              Some((span_length, typestate))
-                            }
+                            Some((span_length, typestate))
                           } else {
                             best
                           }
-                        },
-                      )
-                    {
-                      if let TypeState::Known(t) = best_annotation {
-                        Ok(Some(t.display_name().into()))
+                        } else {
+                          Some((span_length, typestate))
+                        }
                       } else {
-                        Ok(Some(
-                          format!("not Known: {:?}", best_annotation).into(),
-                        ))
+                        best
                       }
-                    } else {
-                      Ok(None)
-                    }
+                    },
+                  )
+                {
+                  if let TypeState::Known(t) = best_annotation {
+                    Ok(Some(t.to_string().into()))
+                  } else {
+                    Ok(Some(format!("not Known: {:?}", best_annotation).into()))
                   }
-                  Err(_) => Ok(None),
+                } else {
+                  Ok(None)
                 }
               }
               Err(_) => Ok(None),
@@ -447,11 +433,80 @@ impl LanguageServer for Backend {
   async fn did_change(&self, params: DidChangeTextDocumentParams) {
     let uri = params.text_document.uri.to_string();
     let changes = params.content_changes;
-    if let Some(change) = changes.get(0) {
-      match self.documents.write() {
-        Ok(mut docs) => docs.insert(uri, change.text.clone()),
+    for change in changes {
+      let text = match self.documents.write() {
+        Ok(mut docs) => {
+          docs.insert(uri.clone(), change.text.clone());
+          change.text.as_str()
+        }
         Err(e) => panic!("did_change failed: {e:?}"),
       };
+
+      let error_messages: Option<
+        Vec<((usize, usize), (usize, usize), String)>,
+      > = match TryInto::<EaslDocument>::try_into(Parser::new(
+        easl_syntax_graph(),
+        text,
+      )) {
+        Ok(document) => {
+          let (mut program, mut errors) =
+            Program::from_easl_document(&document, built_in_macros());
+          if let Err(err) = program.validate_raw_program() {
+            errors.push(err);
+          }
+          Some(
+            errors
+              .into_iter()
+              .map(|err| {
+                err
+                  .source_trace
+                  .all_document_positions()
+                  .into_iter()
+                  .map(|pos| {
+                    (
+                      document.index_to_row_and_col(pos.span.start).unwrap(),
+                      document.index_to_row_and_col(pos.span.end).unwrap(),
+                      err.to_string(),
+                    )
+                  })
+                  .collect::<Vec<_>>()
+              })
+              .flatten()
+              .collect(),
+          )
+        }
+        Err(_) => None,
+      };
+
+      self
+        .client
+        .publish_diagnostics(
+          params.text_document.uri.clone(),
+          error_messages
+            .unwrap_or(vec![])
+            .into_iter()
+            .map(|((start_row, start_col), (end_row, end_col), message)| {
+              Diagnostic {
+                range: Range {
+                  start: Position {
+                    line: start_row as u32,
+                    character: start_col as u32,
+                  },
+                  end: Position {
+                    line: end_row as u32,
+                    character: end_col as u32,
+                  },
+                },
+                severity: Some(DiagnosticSeverity::ERROR),
+                message: message,
+                source: Some("sse".to_string()),
+                ..Default::default()
+              }
+            })
+            .collect(),
+          None,
+        )
+        .await;
     }
   }
 
