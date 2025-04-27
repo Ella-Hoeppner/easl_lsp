@@ -55,6 +55,10 @@
       {
         "command": "extension.moveCursorToEnd",
         "title": "SSE: Move Cursor Right of the Current Form"
+      },
+      {
+        "command": "extension.checkParsable",
+        "title": "SSE: Check whether the document parses to a valid AST"
       }
     ],
     "keybindings": [

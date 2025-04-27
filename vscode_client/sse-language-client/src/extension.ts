@@ -36,7 +36,6 @@ export class TypeHoverProvider implements vscode.HoverProvider {
   }
 }
 
-
 function selectionPositions(editor: vscode.TextEditor) {
   const selection = editor.selection;
   return [{
@@ -226,19 +225,18 @@ export function activate(context: vscode.ExtensionContext) {
           });
           editor.selection = new vscode.Selection(
             start.translate(0, 1),
-            end.translate(0, 0)
+            end.translate(0, 1)
           );
         }
         return;
       }
 
-      await vscode.commands.executeCommand('default:type', { text });
+      await vscode.commands.executeCommand('default:type', args);
     })
   );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.handleBackspace', async () => {
-      outputChannel.appendLine(`attempting to handle backspace`);
       const editor = vscode.window.activeTextEditor;
       if (!editor || editor.document.languageId !== 'sse') {
         await vscode.commands.executeCommand('deleteLeft');
@@ -249,7 +247,14 @@ export function activate(context: vscode.ExtensionContext) {
       const line = editor.document.lineAt(position.line);
       const previousChar = line.text[Math.max(0, position.character - 1)];
 
-      if (position.isEqual(editor.selection.anchor) && enclosers.flat().includes(previousChar)) {
+      let isDocumentParsable = await vscode.commands.executeCommand(
+        'checkParsable',
+        editor.document.uri.toString(),
+      ) as boolean;
+
+      outputChannel.appendLine(`checkParsable: ${isDocumentParsable}`);
+
+      if (position.isEqual(editor.selection.anchor) && enclosers.flat().includes(previousChar) && isDocumentParsable) {
         const newPosition = position.translate(0, -1);
         editor.selection = new vscode.Selection(newPosition, newPosition);
       } else {

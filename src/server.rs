@@ -81,20 +81,24 @@ impl Backend {
             let text = docs
               .get(&uri)
               .expect(&format!("didn't have data for document {}", uri));
-            let document: EaslDocument = parse_easl(text).unwrap();
-            let document_start_index = document
-              .row_and_col_to_index(
-                selection_start_params.position.line as usize,
-                selection_start_params.position.character as usize,
-              )
-              .expect("invalid row and col");
-            let document_end_index = document
-              .row_and_col_to_index(
-                selection_end_params.position.line as usize,
-                selection_end_params.position.character as usize,
-              )
-              .expect("invalid row and col");
-            f(document, document_start_index, document_end_index)
+            match parse_easl(text) {
+              Ok(document) => {
+                let document_start_index = document
+                  .row_and_col_to_index(
+                    selection_start_params.position.line as usize,
+                    selection_start_params.position.character as usize,
+                  )
+                  .expect("invalid row and col");
+                let document_end_index = document
+                  .row_and_col_to_index(
+                    selection_end_params.position.line as usize,
+                    selection_end_params.position.character as usize,
+                  )
+                  .expect("invalid row and col");
+                f(document, document_start_index, document_end_index)
+              }
+              Err(_) => Ok(None),
+            }
           }
           Err(e) => {
             panic!("{name} failed to read document: {e:?}")
@@ -132,6 +136,7 @@ impl LanguageServer for Backend {
             "formatDocument".to_string(),
             "colorDocument".to_string(),
             "getTypeInfo".to_string(),
+            "checkParsable".to_string(),
           ],
           work_done_progress_options: Default::default(),
         }),
@@ -369,6 +374,18 @@ impl LanguageServer for Backend {
           }
         }
       }
+      "checkParsable" => match self.documents.read() {
+        Ok(docs) => {
+          let uri = params.arguments[0].as_str().unwrap().to_string();
+          let text = docs
+            .get(&uri)
+            .expect(&format!("didn't have data for document {}", uri));
+          Ok(Some(parse_easl(text).is_ok().into()))
+        }
+        Err(e) => {
+          panic!("checkParsable failed to read document: {e:?}")
+        }
+      },
       _ => Err(Error::method_not_found()),
     };
     self
