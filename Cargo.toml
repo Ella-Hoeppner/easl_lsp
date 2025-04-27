@@ -7,7 +7,7 @@ edition = "2021"
 serde_json = "1.0.121"
 sse = { git = "https://github.com/Ella-Hoeppner/SSE.git" }
 tokio = { version = "1.38.0", features = ["rt-multi-thread", "io-std", "macros", "io-util"] }
-easl = { git = "https://github.com/Ella-Hoeppner/easl.git" }
+easl = {path = "../easl"} # { git = "https://github.com/Ella-Hoeppner/easl.git" }
 tower-lsp = "0.20.0"
 unicode-segmentation = "1.11.0"
 regex = "1.11.1"

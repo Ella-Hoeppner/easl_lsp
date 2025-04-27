@@ -8,7 +8,11 @@ import {
   Executable
 } from 'vscode-languageclient/node';
 
+let outputChannel: vscode.OutputChannel;
+
 let client: LanguageClient;
+
+let enclosers = [["(", ")"], ["[", "]"], ["{", "}"]];
 
 export class TypeHoverProvider implements vscode.HoverProvider {
   async provideHover(
@@ -65,10 +69,10 @@ async function expandSelection() {
           new vscode.Position(result[2], result[3]),
         );
       } else {
-        console.error('result was undefined');
+        outputChannel.appendLine('result was undefined');
       }
     } catch (error) {
-      console.error('Error calling custom LSP command:', error);
+      outputChannel.appendLine(`Error calling custom LSP command: ${error}`);
     }
   }
 }
@@ -87,10 +91,10 @@ async function moveCursorToStart() {
           new vscode.Position(result[0], result[1]),
         );
       } else {
-        console.error('result was undefined');
+        outputChannel.appendLine('result was undefined');
       }
     } catch (error) {
-      console.error('Error calling custom LSP command:', error);
+      outputChannel.appendLine(`Error calling custom LSP command: ${error}`);
     }
   }
 }
@@ -109,17 +113,17 @@ async function moveCursorToEnd() {
           new vscode.Position(result[0], result[1]),
         );
       } else {
-        console.error('result was undefined');
+        outputChannel.appendLine('result was undefined');
       }
     } catch (error) {
-      console.error('Error calling custom LSP command:', error);
+      outputChannel.appendLine(`Error calling custom LSP command: ${error}`);
     }
   }
 }
 
 export class DocumentSemanticTokensProvider implements vscode.DocumentSemanticTokensProvider {
   async provideDocumentSemanticTokens(document: vscode.TextDocument): Promise<vscode.SemanticTokens> {
-    console.log("provideDocumentSemanticTokens");
+    outputChannel.appendLine("provideDocumentSemanticTokens");
     const builder = new vscode.SemanticTokensBuilder();
     const result = await vscode.commands.executeCommand(
       'colorDocument',
@@ -139,6 +143,8 @@ export class DocumentSemanticTokensProvider implements vscode.DocumentSemanticTo
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  outputChannel = vscode.window.createOutputChannel('SSE Language Client');
+
   const serverPath = path.join(__dirname, 'sse_lsp');
 
   const runOptions: Executable = { command: serverPath, transport: TransportKind.stdio };
@@ -187,7 +193,7 @@ export function activate(context: vscode.ExtensionContext) {
             )];
           }
         } catch (error) {
-          console.error('Error formatting document:', error);
+          outputChannel.appendLine(`Error formatting document: ${error}`);
         }
         return [];
       }
@@ -204,7 +210,7 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      let match = [["(", ")"], ["[", "]"], ["{", "}"]].find(pair => text == pair[0]);
+      let match = enclosers.find(pair => text == pair[0]);
       if (match) {
         let { start, end } = editor.selection;
         if (start.isEqual(end)) {
@@ -232,6 +238,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.handleBackspace', async () => {
+      outputChannel.appendLine(`attempting to handle backspace`);
       const editor = vscode.window.activeTextEditor;
       if (!editor || editor.document.languageId !== 'sse') {
         await vscode.commands.executeCommand('deleteLeft');
@@ -240,9 +247,9 @@ export function activate(context: vscode.ExtensionContext) {
 
       const position = editor.selection.active;
       const line = editor.document.lineAt(position.line);
-      const nextChar = line.text[Math.max(0, position.character - 1)];
+      const previousChar = line.text[Math.max(0, position.character - 1)];
 
-      if (position == editor.selection.anchor && (nextChar == ")" || nextChar == "(")) {
+      if (position.isEqual(editor.selection.anchor) && enclosers.flat().includes(previousChar)) {
         const newPosition = position.translate(0, -1);
         editor.selection = new vscode.Selection(newPosition, newPosition);
       } else {

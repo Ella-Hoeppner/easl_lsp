@@ -4,14 +4,13 @@ use easl::{
   compiler::{
     builtins::built_in_macros,
     program::{EaslDocument, Program},
-    types::TypeState,
+    types::{TypeDescription, TypeState},
   },
   format::format_document,
-  parse::{easl_syntax_graph, Encloser, Operator},
+  parse::{parse_easl, parse_easl_without_comments, Encloser, Operator},
 };
 use regex::Regex;
 use serde_json::Value;
-use sse::{str_tagged::StringTaggedSyntaxGraph, Parser};
 use tower_lsp::{
   jsonrpc::{Error, Result},
   lsp_types::{
@@ -82,8 +81,7 @@ impl Backend {
             let text = docs
               .get(&uri)
               .expect(&format!("didn't have data for document {}", uri));
-            let document: EaslDocument =
-              Parser::new(easl_syntax_graph(), text).try_into().unwrap();
+            let document: EaslDocument = parse_easl(text).unwrap();
             let document_start_index = document
               .row_and_col_to_index(
                 selection_start_params.position.line as usize,
@@ -116,25 +114,6 @@ impl Backend {
       )))
     }
   }
-}
-
-fn sexp_graph<'g>() -> StringTaggedSyntaxGraph<'g> {
-  StringTaggedSyntaxGraph::contextless_from_descriptions(
-    vec![
-      ' '.to_string(),
-      '\n'.to_string(),
-      '\t'.to_string(),
-      '\r'.to_string(),
-    ],
-    Some('\\'.to_string()),
-    vec![("", "(", ")"), ("bracket", "[", "]")],
-    vec![
-      ("quote", "'", 0, 1),
-      ("meta", "^", 0, 2),
-      ("question", "?", 1, 0),
-      ("colon", ":", 1, 1),
-    ],
-  )
 }
 
 #[tower_lsp::async_trait]
@@ -234,10 +213,7 @@ impl LanguageServer for Backend {
             let text = docs
               .get(&uri)
               .expect(&format!("didn't have data for document {}", uri));
-            match TryInto::<EaslDocument>::try_into(Parser::new(
-              easl_syntax_graph(),
-              text,
-            )) {
+            match parse_easl(text) {
               Ok(document) => Ok(Some(
                 serde_json::to_value(format_document(document)).unwrap(),
               )),
@@ -256,19 +232,16 @@ impl LanguageServer for Backend {
             let text = docs
               .get(&uri)
               .expect(&format!("didn't have data for document {}", uri));
-            match TryInto::<EaslDocument>::try_into(Parser::new(
-              easl_syntax_graph(),
-              text,
-            )) {
+            match parse_easl(text) {
               Ok(document) => Ok(Some(
                 document
                   .gather_annotations(
                     (false, 0),
-                    &|leaf: &str, (commented, depth)| {
+                    &|leaf: &str, (commented, _)| {
                       if *commented {
                         Some(SyntaxColorMode::Commented)
                       } else {
-                        ["let", "defn", "def", "var"]
+                        ["let", "defn", "def", "var", "override"]
                           .contains(&leaf)
                           .then(|| SyntaxColorMode::Keyword)
                           .or_else(|| {
@@ -339,16 +312,13 @@ impl LanguageServer for Backend {
             let text = docs
               .get(&uri)
               .expect(&format!("didn't have data for document {}", uri));
-            match TryInto::<EaslDocument>::try_into(Parser::new(
-              easl_syntax_graph(),
-              text,
-            )) {
+            match parse_easl_without_comments(text) {
               Ok(document) => {
                 let char_index =
                   document.row_and_col_to_index(row, col).unwrap();
                 let (mut program, _) =
                   Program::from_easl_document(&document, built_in_macros());
-                if let Err(err) = program.validate_raw_program() {
+                for err in program.validate_raw_program().into_iter() {
                   extra_messages.push(format!("{err:#?}"));
                 }
                 if let Some((_, best_annotation)) =
@@ -383,7 +353,7 @@ impl LanguageServer for Backend {
                   )
                 {
                   if let TypeState::Known(t) = best_annotation {
-                    Ok(Some(t.to_string().into()))
+                    Ok(Some(TypeDescription::from(t).to_string().into()))
                   } else {
                     Ok(Some(format!("not Known: {:?}", best_annotation).into()))
                   }
@@ -444,15 +414,12 @@ impl LanguageServer for Backend {
 
       let error_messages: Option<
         Vec<((usize, usize), (usize, usize), String)>,
-      > = match TryInto::<EaslDocument>::try_into(Parser::new(
-        easl_syntax_graph(),
-        text,
-      )) {
+      > = match parse_easl_without_comments(text) {
         Ok(document) => {
           let (mut program, mut errors) =
             Program::from_easl_document(&document, built_in_macros());
-          if let Err(err) = program.validate_raw_program() {
-            errors.push(err);
+          for err in program.validate_raw_program().into_iter() {
+            errors.log(err);
           }
           Some(
             errors
@@ -480,6 +447,17 @@ impl LanguageServer for Backend {
 
       self
         .client
+        .log_message(
+          MessageType::INFO,
+          format!(
+            "{} error_messages",
+            error_messages.clone().unwrap_or(vec![]).len()
+          ),
+        )
+        .await;
+
+      self
+        .client
         .publish_diagnostics(
           params.text_document.uri.clone(),
           error_messages
@@ -498,7 +476,7 @@ impl LanguageServer for Backend {
                   },
                 },
                 severity: Some(DiagnosticSeverity::ERROR),
-                message: message,
+                message,
                 source: Some("sse".to_string()),
                 ..Default::default()
               }
