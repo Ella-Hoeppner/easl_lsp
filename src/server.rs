@@ -4,7 +4,7 @@ use easl::{
   compiler::{
     builtins::built_in_macros,
     program::{EaslDocument, Program},
-    types::{TypeDescription, TypeState},
+    types::{TypeDescription, TypeState, TypeStateDescription},
   },
   format::format_document,
   parse::{parse_easl, parse_easl_without_comments, Encloser, Operator},
@@ -360,7 +360,13 @@ impl LanguageServer for Backend {
                   if let TypeState::Known(t) = best_annotation {
                     Ok(Some(TypeDescription::from(t).to_string().into()))
                   } else {
-                    Ok(Some(format!("not Known: {:?}", best_annotation).into()))
+                    Ok(Some(
+                      format!(
+                        "not Known: {}",
+                        TypeStateDescription::from(best_annotation)
+                      )
+                      .into(),
+                    ))
                   }
                 } else {
                   Ok(None)

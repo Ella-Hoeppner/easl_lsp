@@ -205,29 +205,53 @@ export function activate(context: vscode.ExtensionContext) {
       let text = args.text;
       const editor = vscode.window.activeTextEditor;
       if (!editor || editor.document.languageId !== 'sse') {
-        await vscode.commands.executeCommand('default:type', { text });
+        await vscode.commands.executeCommand('default:type', args);
         return;
       }
 
-      let match = enclosers.find(pair => text == pair[0]);
-      if (match) {
+      let openerMatch = enclosers.find(pair => text == pair[0]);
+      if (openerMatch) {
+        let isDocumentParsable = await vscode.commands.executeCommand(
+          'checkParsable',
+          editor.document.uri.toString(),
+        ) as boolean;
+        if (!isDocumentParsable) {
+          await vscode.commands.executeCommand('default:type', args);
+          return;
+        }
         let { start, end } = editor.selection;
         if (start.isEqual(end)) {
           await editor.edit(editBuilder => {
-            editBuilder.insert(start, match[0] + match[1]);
+            editBuilder.insert(start, openerMatch[0] + openerMatch[1]);
           });
           const newPosition = start.translate(0, 1);
           editor.selection = new vscode.Selection(newPosition, newPosition);
         } else {
           await editor.edit(editBuilder => {
-            editBuilder.insert(end, match[1]);
-            editBuilder.insert(start, match[0]);
+            editBuilder.insert(end, openerMatch[1]);
+            editBuilder.insert(start, openerMatch[0]);
           });
           editor.selection = new vscode.Selection(
             start.translate(0, 1),
             end.translate(0, 1)
           );
         }
+        return;
+      }
+
+      let closerMatch = enclosers.find(pair => text == pair[1]);
+      if (closerMatch) {
+        let { start, end } = editor.selection;
+        if (start.isEqual(end)) {
+          const line = editor.document.lineAt(start.line);
+          const nextChar = line.text[Math.max(0, start.character)];
+          if (nextChar == closerMatch[1]) {
+            const newPosition = start.translate(0, 1);
+            editor.selection = new vscode.Selection(newPosition, newPosition);
+            return;
+          }
+        }
+        await vscode.commands.executeCommand('default:type', args);
         return;
       }
 
