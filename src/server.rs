@@ -318,7 +318,7 @@ impl LanguageServer for Backend {
               .get(&uri)
               .expect(&format!("didn't have data for document {}", uri));
             match parse_easl_without_comments(text) {
-              Ok(document) => {
+              Ok(Ok(document)) => {
                 let char_index =
                   document.row_and_col_to_index(row, col).unwrap();
                 let (mut program, _) =
@@ -332,8 +332,7 @@ impl LanguageServer for Backend {
                     |best: Option<(usize, TypeState)>,
                      (source_trace, typestate)| {
                       if let Some(span_length) = source_trace
-                        .all_document_positions()
-                        .into_iter()
+                        .into_document_positions_iter()
                         .filter_map(|pos| {
                           pos.span.contains(&char_index).then(|| pos.span.len())
                         })
@@ -372,7 +371,7 @@ impl LanguageServer for Backend {
                   Ok(None)
                 }
               }
-              Err(_) => Ok(None),
+              Err(_) | Ok(Err(_)) => Ok(None),
             }
           }
           Err(e) => {
@@ -438,7 +437,7 @@ impl LanguageServer for Backend {
       let error_messages: Option<
         Vec<((usize, usize), (usize, usize), String)>,
       > = match parse_easl_without_comments(text) {
-        Ok(document) => {
+        Ok(Ok(document)) => {
           let (mut program, mut errors) =
             Program::from_easl_document(&document, built_in_macros());
           for err in program.validate_raw_program().into_iter() {
@@ -448,15 +447,15 @@ impl LanguageServer for Backend {
             errors
               .into_iter()
               .map(|err| {
+                let err_string = err.kind.clone().to_string();
                 err
                   .source_trace
-                  .all_document_positions()
-                  .into_iter()
+                  .into_document_positions_iter()
                   .map(|pos| {
                     (
                       document.index_to_row_and_col(pos.span.start).unwrap(),
                       document.index_to_row_and_col(pos.span.end).unwrap(),
-                      err.to_string(),
+                      err_string.clone(),
                     )
                   })
                   .collect::<Vec<_>>()
@@ -465,7 +464,7 @@ impl LanguageServer for Backend {
               .collect(),
           )
         }
-        Err(_) => None,
+        Err(_) | Ok(Err(_)) => None,
       };
 
       self
