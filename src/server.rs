@@ -81,24 +81,20 @@ impl Backend {
             let text = docs
               .get(&uri)
               .expect(&format!("didn't have data for document {}", uri));
-            match parse_easl(text) {
-              Ok(document) => {
-                let document_start_index = document
-                  .row_and_col_to_index(
-                    selection_start_params.position.line as usize,
-                    selection_start_params.position.character as usize,
-                  )
-                  .expect("invalid row and col");
-                let document_end_index = document
-                  .row_and_col_to_index(
-                    selection_end_params.position.line as usize,
-                    selection_end_params.position.character as usize,
-                  )
-                  .expect("invalid row and col");
-                f(document, document_start_index, document_end_index)
-              }
-              Err(_) => Ok(None),
-            }
+            let document = parse_easl(text);
+            let document_start_index = document
+              .row_and_col_to_index(
+                selection_start_params.position.line as usize,
+                selection_start_params.position.character as usize,
+              )
+              .expect("invalid row and col");
+            let document_end_index = document
+              .row_and_col_to_index(
+                selection_end_params.position.line as usize,
+                selection_end_params.position.character as usize,
+              )
+              .expect("invalid row and col");
+            f(document, document_start_index, document_end_index)
           }
           Err(e) => {
             panic!("{name} failed to read document: {e:?}")
@@ -218,12 +214,10 @@ impl LanguageServer for Backend {
             let text = docs
               .get(&uri)
               .expect(&format!("didn't have data for document {}", uri));
-            match parse_easl(text) {
-              Ok(document) => Ok(Some(
-                serde_json::to_value(format_document(document)).unwrap(),
-              )),
-              Err(_) => Ok(None),
-            }
+            let document = parse_easl(text);
+            Ok(Some(
+              serde_json::to_value(format_document(document)).unwrap(),
+            ))
           }
           Err(e) => {
             panic!("formatDocument failed to read document: {e:?}")
@@ -237,71 +231,69 @@ impl LanguageServer for Backend {
             let text = docs
               .get(&uri)
               .expect(&format!("didn't have data for document {}", uri));
-            match parse_easl(text) {
-              Ok(document) => Ok(Some(
-                document
-                  .gather_annotations(
-                    (false, 0),
-                    &|leaf: &str, (commented, _)| {
+            let document = parse_easl(text);
+            Ok(Some(
+              document
+                .gather_annotations(
+                  (false, 0),
+                  &|leaf: &str, (commented, _)| {
+                    if *commented {
+                      Some(SyntaxColorMode::Commented)
+                    } else {
+                      ["let", "defn", "def", "var", "override"]
+                        .contains(&leaf)
+                        .then(|| SyntaxColorMode::Keyword)
+                        .or_else(|| {
+                          Regex::new(r"^\d+(\.\d+)?[iuf]?$")
+                            .unwrap()
+                            .is_match(leaf)
+                            .then(|| SyntaxColorMode::Number)
+                        })
+                    }
+                  },
+                  &|_: &Encloser, (commented, depth)| {
+                    (
+                      (*commented, depth + 1),
                       if *commented {
                         Some(SyntaxColorMode::Commented)
                       } else {
-                        ["let", "defn", "def", "var", "override"]
-                          .contains(&leaf)
-                          .then(|| SyntaxColorMode::Keyword)
-                          .or_else(|| {
-                            Regex::new(r"^\d+(\.\d+)?[iuf]?$")
-                              .unwrap()
-                              .is_match(leaf)
-                              .then(|| SyntaxColorMode::Number)
-                          })
-                      }
-                    },
-                    &|_: &Encloser, (commented, depth)| {
+                        Some(SyntaxColorMode::Encloser(*depth))
+                      },
+                    )
+                  },
+                  &|operator: &Operator, (commented, depth)| {
+                    if *operator == Operator::ExpressionComment {
+                      ((true, *depth), None)
+                    } else {
                       (
-                        (*commented, depth + 1),
+                        (*commented, *depth),
                         if *commented {
                           Some(SyntaxColorMode::Commented)
                         } else {
-                          Some(SyntaxColorMode::Encloser(*depth))
+                          Some(SyntaxColorMode::Operator)
                         },
                       )
-                    },
-                    &|operator: &Operator, (commented, depth)| {
-                      if *operator == Operator::ExpressionComment {
-                        ((true, *depth), None)
-                      } else {
-                        (
-                          (*commented, *depth),
-                          if *commented {
-                            Some(SyntaxColorMode::Commented)
-                          } else {
-                            Some(SyntaxColorMode::Operator)
-                          },
-                        )
-                      }
-                    },
-                  )
-                  .into_iter()
-                  .filter_map(|(span, annotation)| {
-                    if let Ok((line, col)) =
-                      document.index_to_row_and_col(span.start)
-                    {
-                      Some([
-                        line,
-                        col,
-                        span.end - span.start,
-                        annotation.encode(),
-                        0,
-                      ])
-                    } else {
-                      None
                     }
-                  })
-                  .collect(),
-              )),
-              Err(_) => Ok(None),
-            }
+                  },
+                )
+                .into_iter()
+                .filter_map(|(span, annotation)| {
+                  if let Ok((line, col)) =
+                    document.index_to_row_and_col(span.start)
+                  {
+                    Some([
+                      line,
+                      col,
+                      span.end - span.start,
+                      annotation.encode(),
+                      0,
+                    ])
+                  } else {
+                    None
+                  }
+                })
+                .collect(),
+            ))
           }
           Err(e) => {
             panic!("formatDocument failed to read document: {e:?}")
@@ -318,7 +310,7 @@ impl LanguageServer for Backend {
               .get(&uri)
               .expect(&format!("didn't have data for document {}", uri));
             match parse_easl_without_comments(text) {
-              Ok(Ok(document)) => {
+              Ok(document) => {
                 let char_index =
                   document.row_and_col_to_index(row, col).unwrap();
                 let (mut program, _) =
@@ -371,7 +363,7 @@ impl LanguageServer for Backend {
                   Ok(None)
                 }
               }
-              Err(_) | Ok(Err(_)) => Ok(None),
+              Err(_) => Ok(None),
             }
           }
           Err(e) => {
@@ -385,7 +377,7 @@ impl LanguageServer for Backend {
           let text = docs
             .get(&uri)
             .expect(&format!("didn't have data for document {}", uri));
-          Ok(Some(parse_easl(text).is_ok().into()))
+          Ok(Some(parse_easl(text).parsing_failure.is_none().into()))
         }
         Err(e) => {
           panic!("checkParsable failed to read document: {e:?}")
@@ -437,7 +429,7 @@ impl LanguageServer for Backend {
       let error_messages: Option<
         Vec<((usize, usize), (usize, usize), String)>,
       > = match parse_easl_without_comments(text) {
-        Ok(Ok(document)) => {
+        Ok(document) => {
           let (mut program, mut errors) =
             Program::from_easl_document(&document, built_in_macros());
           for err in program.validate_raw_program().into_iter() {
@@ -464,7 +456,7 @@ impl LanguageServer for Backend {
               .collect(),
           )
         }
-        Err(_) | Ok(Err(_)) => None,
+        Err(_) => None,
       };
 
       self

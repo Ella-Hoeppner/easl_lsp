@@ -114,7 +114,7 @@ dependencies = [
 [[package]]
 name = "easl"
 version = "0.0.0"
-source = "git+https://github.com/Ella-Hoeppner/easl.git#d4453603bcabdb1fe7e5f8919392f9b5525309f8"
+source = "git+https://github.com/Ella-Hoeppner/easl.git#1b37aa9357c74bd4d34a382a7a6d544ac9d6d66c"
 dependencies = [
  "lazy_static",
  "sse",
@@ -635,7 +635,7 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 [[package]]
 name = "sse"
 version = "0.0.0"
-source = "git+https://github.com/Ella-Hoeppner/SSE.git#b30c815271df66d4988f7fdff058a64912a5f833"
+source = "git+https://github.com/Ella-Hoeppner/SSE.git#b78436e282e99ec55436e456c05112c92482436f"
 dependencies = [
  "take_mut",
  "unicode-segmentation",
