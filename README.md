@@ -1,22 +1,26 @@
 WIP Language Server for [EASL](https://github.com/Ella-Hoeppner/easl)
 
-dev command to built rust code, build client, and install client:
+The following command will build rust code, build the client, and then install the client:
 
 ```
 cargo build --release; cd vscode_client/sse-language-client/; npm run build; vsce package; code --install-extension sse-language-client-0.0.1.vsix; cd ../../
 ```
 
 # to do
-* display at least some kind of error when parsing fails
-  * rn SSE doesn't give much info when parsing fails, but it would be better than nothing to just like highlight the whole document with an error to be like "u messed up, might wanna hit ctrl-z until you're back to a valid state" whenever parsing fails
-    * but a better solution would be to change SSE so that when parsing fails it gives better information. Like, at the very least it should say "parsing failed *at this particular character*", or maybe even better "parsing failed at this particular character, and here's the partial AST that I'd built up until this point so you can still do some highlighting in the valid part of the ile"
-
-* improve type descriptions on mouse hover for `let` bindings, right now you don't get their types and instead just get the type of the whole `let` block
-
-* rename internally to easl_lsp
-
 * ctrl-a when to the left of a prefix op doesn't work
+
+* don't re-typecheck everything for every hover, instead just do typechecking whenever a change occurs and cache the type annotation info
+
+* types with generics are displayed wrong, usually just with the base type name and no generic args
+
+* hovering over the args list gives weird results, it just 
 
 * move selected form forward/backward in its parent with ctrl-shift-a/d
 
 * when cursor is adjacent to an encloser, put a little highlight box around it and the corresponding opener/closer, like happens in other languages
+
+* go-to definition on cmd-click for functions and types
+
+* should make the names of types in type hover info clickable to go to the definition
+
+* Hovering over a name bound to a top-level definition (whether `defn`, `def`, `override`, or `var`) should give more info, like display the whole type definition/function signature or something like that.

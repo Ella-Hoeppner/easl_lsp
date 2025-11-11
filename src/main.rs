@@ -1,4 +1,4 @@
-use sse_lsp::Backend;
+use easl_lsp::Backend;
 use tower_lsp::{LspService, Server};
 
 #[tokio::main]

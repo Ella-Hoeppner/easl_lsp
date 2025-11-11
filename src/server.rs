@@ -309,61 +309,55 @@ impl LanguageServer for Backend {
             let text = docs
               .get(&uri)
               .expect(&format!("didn't have data for document {}", uri));
-            match parse_easl_without_comments(text) {
-              Ok(document) => {
-                let char_index =
-                  document.row_and_col_to_index(row, col).unwrap();
-                let (mut program, _) =
-                  Program::from_easl_document(&document, built_in_macros());
-                for err in program.validate_raw_program().into_iter() {
-                  extra_messages.push(format!("{err:#?}"));
-                }
-                if let Some((_, best_annotation)) =
-                  program.gather_type_annotations().into_iter().fold(
-                    None,
-                    |best: Option<(usize, TypeState)>,
-                     (source_trace, typestate)| {
-                      if let Some(span_length) = source_trace
-                        .into_document_positions_iter()
-                        .filter_map(|pos| {
-                          pos.span.contains(&char_index).then(|| pos.span.len())
-                        })
-                        .min()
-                      {
-                        if let Some((best_length, ref best_typestate)) = best {
-                          if span_length < best_length
-                            || (!best_typestate.check_is_fully_known()
-                              && typestate.check_is_fully_known())
-                          {
-                            Some((span_length, typestate))
-                          } else {
-                            best
-                          }
-                        } else {
-                          Some((span_length, typestate))
-                        }
-                      } else {
-                        best
-                      }
-                    },
-                  )
+            let document = parse_easl_without_comments(text);
+            let char_index = document.row_and_col_to_index(row, col).unwrap();
+            let (mut program, _) =
+              Program::from_easl_document(&document, built_in_macros());
+            for err in program.validate_raw_program().into_iter() {
+              extra_messages.push(format!("{err:#?}"));
+            }
+            let annotations = program.gather_type_annotations();
+            if let Some((_, best_annotation)) = annotations.into_iter().fold(
+              None,
+              |best: Option<(usize, TypeState)>, (source_trace, typestate)| {
+                if let Some(span_length) = source_trace
+                  .primary_position
+                  .iter()
+                  .filter_map(|pos| {
+                    pos.span.contains(&char_index).then(|| pos.span.len())
+                  })
+                  .min()
                 {
-                  if let TypeState::Known(t) = best_annotation {
-                    Ok(Some(TypeDescription::from(t).to_string().into()))
+                  if let Some((best_length, ref best_typestate)) = best {
+                    if span_length < best_length
+                      || (!best_typestate.check_is_fully_known()
+                        && typestate.check_is_fully_known())
+                    {
+                      Some((span_length, typestate))
+                    } else {
+                      best
+                    }
                   } else {
-                    Ok(Some(
-                      format!(
-                        "not Known: {}",
-                        TypeStateDescription::from(best_annotation)
-                      )
-                      .into(),
-                    ))
+                    Some((span_length, typestate))
                   }
                 } else {
-                  Ok(None)
+                  best
                 }
+              },
+            ) {
+              if let TypeState::Known(t) = best_annotation {
+                Ok(Some(TypeDescription::from(t).to_string().into()))
+              } else {
+                Ok(Some(
+                  format!(
+                    "not Known: {}",
+                    TypeStateDescription::from(best_annotation)
+                  )
+                  .into(),
+                ))
               }
-              Err(_) => Ok(None),
+            } else {
+              Ok(None)
             }
           }
           Err(e) => {
@@ -377,7 +371,7 @@ impl LanguageServer for Backend {
           let text = docs
             .get(&uri)
             .expect(&format!("didn't have data for document {}", uri));
-          Ok(Some(parse_easl(text).parsing_failure.is_none().into()))
+          Ok(Some(parse_easl(text).parsing_failures.is_empty().into()))
         }
         Err(e) => {
           panic!("checkParsable failed to read document: {e:?}")
@@ -428,8 +422,9 @@ impl LanguageServer for Backend {
 
       let error_messages: Option<
         Vec<((usize, usize), (usize, usize), String)>,
-      > = match parse_easl_without_comments(text) {
-        Ok(document) => {
+      > = {
+        let document = parse_easl_without_comments(text);
+        if document.parsing_failures.is_empty() {
           let (mut program, mut errors) =
             Program::from_easl_document(&document, built_in_macros());
           for err in program.validate_raw_program().into_iter() {
@@ -455,8 +450,21 @@ impl LanguageServer for Backend {
               .flatten()
               .collect(),
           )
+        } else {
+          Some(
+            document
+              .parsing_failures
+              .iter()
+              .map(|e| {
+                (
+                  document.index_to_row_and_col(e.pos.start).unwrap(),
+                  document.index_to_row_and_col(e.pos.end).unwrap(),
+                  format!("{}", e.kind),
+                )
+              })
+              .collect(),
+          )
         }
-        Err(_) => None,
       };
 
       self
