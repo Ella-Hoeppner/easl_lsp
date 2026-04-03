@@ -1,6 +1,6 @@
 /target
 .vscode/
-/vscode_client/sse-language-client/out
-/vscode_client/sse-language-client/node_modules
-*/.DS_Store
 .DS_Store
+vscode_client/easl-language-client/node_modules
+vscode_client/easl-language-client/out
+vscode_client/easl-language-client/*.vsix

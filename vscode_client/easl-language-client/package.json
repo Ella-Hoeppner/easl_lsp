@@ -1,0 +1,108 @@
+{
+  "name": "easl-language-client",
+  "displayName": "Easl Language Client",
+  "description": "Language support for Easl (Enhanced Abstraction Shader Language)",
+  "version": "0.1.0",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "categories": ["Programming Languages"],
+  "main": "./out/extension.js",
+  "activationEvents": ["onLanguage:easl"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "easl",
+        "aliases": ["Easl", "EASL", "easl"],
+        "extensions": [".easl", ".sse"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "semanticTokenTypes": [
+      {
+        "id": "encloserD0",
+        "superType": "variable",
+        "description": "Encloser at depth 0 (mod 7)"
+      },
+      {
+        "id": "encloserD1",
+        "superType": "variable",
+        "description": "Encloser at depth 1 (mod 7)"
+      },
+      {
+        "id": "encloserD2",
+        "superType": "variable",
+        "description": "Encloser at depth 2 (mod 7)"
+      },
+      {
+        "id": "encloserD3",
+        "superType": "variable",
+        "description": "Encloser at depth 3 (mod 7)"
+      },
+      {
+        "id": "encloserD4",
+        "superType": "variable",
+        "description": "Encloser at depth 4 (mod 7)"
+      },
+      {
+        "id": "encloserD5",
+        "superType": "variable",
+        "description": "Encloser at depth 5 (mod 7)"
+      },
+      {
+        "id": "encloserD6",
+        "superType": "variable",
+        "description": "Encloser at depth 6 (mod 7)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "easl.expandSelection",
+        "title": "Easl: Expand Selection to Enclosing Form"
+      },
+      {
+        "command": "easl.moveCursorToStart",
+        "title": "Easl: Move Cursor to Start of Current Form"
+      },
+      {
+        "command": "easl.moveCursorToEnd",
+        "title": "Easl: Move Cursor to End of Current Form"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "easl.expandSelection",
+        "key": "ctrl+w",
+        "when": "editorTextFocus && editorLangId == easl"
+      },
+      {
+        "command": "easl.moveCursorToStart",
+        "key": "ctrl+a",
+        "when": "editorTextFocus && editorLangId == easl"
+      },
+      {
+        "command": "easl.moveCursorToEnd",
+        "key": "ctrl+d",
+        "when": "editorTextFocus && editorLangId == easl"
+      }
+    ]
+  },
+  "files": ["language-configuration.json", "out/**/*"],
+  "scripts": {
+    "build": "webpack --mode production && node build.js",
+    "vscode:prepublish": "npm run build",
+    "compile": "webpack --mode development"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.11",
+    "@types/vscode": "^1.91.0",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.5.3",
+    "webpack": "^5.97.1",
+    "webpack-cli": "^6.0.1"
+  }
+}
