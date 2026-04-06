@@ -4,6 +4,10 @@
   "description": "Language support for Easl (Enhanced Abstraction Shader Language)",
   "version": "0.1.0",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ella-Hoeppner/easl_lsp"
+  },
   "engines": {
     "vscode": "^1.91.0"
   },
@@ -88,7 +92,7 @@
       }
     ]
   },
-  "files": ["language-configuration.json", "out/**/*"],
+  "files": ["language-configuration.json", "LICENSE", "out/**/*"],
   "scripts": {
     "build": "webpack --mode production && node build.js",
     "vscode:prepublish": "npm run build",
