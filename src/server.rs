@@ -15,7 +15,8 @@ use tokio::sync::RwLock;
 use tower_lsp::{
   jsonrpc::{Error, Result},
   lsp_types::{
-    Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
+    CompletionItem, CompletionOptions, CompletionParams, CompletionResponse,
+    CompletionTextEdit, Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     DocumentFormattingParams, ExecuteCommandParams,
     Hover, HoverContents, HoverParams, HoverProviderCapability,
@@ -331,6 +332,10 @@ impl LanguageServer for Backend {
             },
           ),
         ),
+        completion_provider: Some(CompletionOptions {
+          trigger_characters: Some(vec!["-".to_string()]),
+          ..Default::default()
+        }),
         document_formatting_provider: Some(OneOf::Left(true)),
         // Don't advertise commands via executeCommandProvider — that causes
         // vscode-languageclient to auto-register them as VS Code commands,
@@ -501,6 +506,75 @@ impl LanguageServer for Backend {
     }]))
   }
 
+  // ---- Completion (kebab-case identifier completion) ----
+
+  async fn completion(
+    &self,
+    params: CompletionParams,
+  ) -> Result<Option<CompletionResponse>> {
+    let uri = params
+      .text_document_position
+      .text_document
+      .uri
+      .to_string();
+    let line = params.text_document_position.position.line as usize;
+    let col = params.text_document_position.position.character as usize;
+
+    let docs = self.documents.read().await;
+    let text = match docs.get(&uri) {
+      Some(s) => s.text.clone(),
+      None => return Ok(None),
+    };
+    drop(docs);
+
+    let document = parse_easl(&text);
+    let cursor_index = match document.row_and_col_to_index(line, col) {
+      Ok(i) => i,
+      Err(_) => return Ok(None),
+    };
+
+    let token_start = find_token_start(&text, cursor_index);
+    let prefix = &text[token_start..cursor_index];
+
+    if prefix.is_empty() {
+      return Ok(None);
+    }
+
+    let (start_line, start_col) = match document.index_to_row_and_col(token_start) {
+      Ok(p) => p,
+      Err(_) => return Ok(None),
+    };
+
+    let mut identifiers = collect_identifiers(&text);
+    identifiers.sort();
+    identifiers.dedup();
+
+    let items: Vec<CompletionItem> = identifiers
+      .into_iter()
+      .filter(|id| id.starts_with(prefix) && id.len() > prefix.len())
+      .map(|id| CompletionItem {
+        label: id.clone(),
+        filter_text: Some(id.clone()),
+        text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+          range: LspRange {
+            start: Position {
+              line: start_line as u32,
+              character: start_col as u32,
+            },
+            end: Position {
+              line: line as u32,
+              character: col as u32,
+            },
+          },
+          new_text: id,
+        })),
+        ..Default::default()
+      })
+      .collect();
+
+    Ok(Some(CompletionResponse::Array(items)))
+  }
+
   // ---- Custom commands (structural editing) ----
 
   async fn execute_command(
@@ -572,6 +646,55 @@ impl LanguageServer for Backend {
       _ => Err(Error::method_not_found()),
     }
   }
+}
+
+/// Scan backward from `cursor` (byte index) to find the start of the current token.
+/// Stops at whitespace or bracket/delimiter characters.
+fn find_token_start(text: &str, cursor: usize) -> usize {
+  let before = &text[..cursor];
+  for (i, c) in before.char_indices().rev() {
+    if c.is_whitespace() || "()[]{};\"".contains(c) {
+      return i + c.len_utf8();
+    }
+  }
+  0
+}
+
+/// Collect all unique non-numeric leaf identifiers from the document.
+fn collect_identifiers(text: &str) -> Vec<String> {
+  let document = parse_easl(text);
+  let number_re = Regex::new(r"^\d+(\.\d+)?[iuf]?$").unwrap();
+  document
+    .gather_annotations(
+      (false, 0usize),
+      &|leaf: &str, (commented, _depth)| -> Option<String> {
+        if *commented {
+          return None;
+        }
+        if number_re.is_match(leaf) {
+          return None;
+        }
+        Some(leaf.to_string())
+      },
+      &|encloser: &Encloser, (commented, depth)| {
+        let new_state = match encloser {
+          Encloser::LineComment | Encloser::BlockComment => (true, *depth),
+          _ => (*commented, depth + 1),
+        };
+        (new_state, None::<String>)
+      },
+      &|operator: &Operator, (commented, depth)| {
+        let new_state = if *operator == Operator::ExpressionComment {
+          (true, *depth)
+        } else {
+          (*commented, *depth)
+        };
+        (new_state, None::<String>)
+      },
+    )
+    .into_iter()
+    .map(|(_, name)| name)
+    .collect()
 }
 
 /// Extract (start, end) TextDocumentPositionParams from execute_command args.
