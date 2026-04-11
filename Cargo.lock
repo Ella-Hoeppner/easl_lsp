@@ -84,7 +84,7 @@ dependencies = [
 [[package]]
 name = "easl"
 version = "0.0.0"
-source = "git+https://github.com/Ella-Hoeppner/easl.git#7327043e471168b80c603c19c68bfcab915921cc"
+source = "git+https://github.com/Ella-Hoeppner/easl.git#770d775cb91634b5ee932f75c3548ace25fd0135"
 dependencies = [
  "fsexp",
  "lazy_static",

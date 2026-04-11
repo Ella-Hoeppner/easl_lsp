@@ -1,6 +1,6 @@
 WIP Language Server and VS Code language client for [easl](https://github.com/Ella-Hoeppner/easl), a Lisp-like shader language that compiles to WGSL.
 
-## Setup
+## VS Code Setup
 
 **Build & install** (from repo root):
 ```
