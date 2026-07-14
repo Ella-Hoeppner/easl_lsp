@@ -3,11 +3,14 @@ use std::{collections::HashMap, ops::Range, sync::Arc};
 use easl::{
   compiler::{
     builtins::built_in_macros,
-    program::Program,
+    program::{CompilerTarget, Program},
     types::{TypeDescription, TypeState, TypeStateDescription},
   },
   format::format_document,
-  parse::{parse_easl, parse_easl_without_comments, Encloser, Operator},
+  parse::{
+    parse_easl, parse_easl_without_comments, EaslMultiDocument, Encloser,
+    Operator,
+  },
 };
 use regex::Regex;
 use serde_json::Value;
@@ -116,9 +119,9 @@ fn compile_text(
       .iter()
       .filter_map(|e| {
         let (start_row, start_col) =
-          document.index_to_row_and_col(e.pos.start).ok()?;
+          document.index_to_row_and_col(e.pos.start, text).ok()?;
         let (end_row, end_col) =
-          document.index_to_row_and_col(e.pos.end).ok()?;
+          document.index_to_row_and_col(e.pos.end, text).ok()?;
         Some(Diagnostic {
           range: LspRange {
             start: Position {
@@ -141,9 +144,11 @@ fn compile_text(
   }
 
   // Full compilation.
-  let (mut program, mut errors) =
-    Program::from_easl_document(&document, built_in_macros());
-  for err in program.validate_raw_program().into_iter() {
+  let (mut program, mut errors) = Program::from_easl_documents(
+    &EaslMultiDocument::from_singular_document_sourceless(document.clone()),
+    built_in_macros(),
+  );
+  for err in program.validate_raw_program(CompilerTarget::WGSL).into_iter() {
     errors.log(err);
   }
 
@@ -171,9 +176,9 @@ fn compile_text(
         .into_document_positions_iter()
         .filter_map(|pos| {
           let (start_row, start_col) =
-            document.index_to_row_and_col(pos.span.start).ok()?;
+            document.index_to_row_and_col(pos.span.start, text).ok()?;
           let (end_row, end_col) =
-            document.index_to_row_and_col(pos.span.end).ok()?;
+            document.index_to_row_and_col(pos.span.end, text).ok()?;
           Some(Diagnostic {
             range: LspRange {
               start: Position {
@@ -257,7 +262,7 @@ fn build_semantic_tokens(text: &str) -> Vec<SemanticToken> {
     )
     .into_iter()
     .filter_map(|(span, token_type): (Range<usize>, u32)| {
-      let (line, col) = document.index_to_row_and_col(span.start).ok()?;
+      let (line, col) = document.index_to_row_and_col(span.start, text).ok()?;
       let length = (span.end - span.start) as u32;
       if length == 0 {
         return None;
@@ -399,7 +404,7 @@ impl LanguageServer for Backend {
 
     // Re-parse (fast) to convert position to byte index.
     let document = parse_easl(&state.text);
-    let char_index = match document.row_and_col_to_index(line, col) {
+    let char_index = match document.row_and_col_to_index(line, col, &state.text) {
       Ok(i) => i,
       Err(_) => return Ok(None),
     };
@@ -491,6 +496,12 @@ impl LanguageServer for Backend {
         .await
         .map_err(|_| Error::internal_error())?;
 
+    // Skip formatting if the document has parse errors.
+    let formatted = match formatted {
+      Ok(s) => s,
+      Err(_) => return Ok(None),
+    };
+
     Ok(Some(vec![TextEdit {
       range: LspRange {
         start: Position {
@@ -528,7 +539,7 @@ impl LanguageServer for Backend {
     drop(docs);
 
     let document = parse_easl(&text);
-    let cursor_index = match document.row_and_col_to_index(line, col) {
+    let cursor_index = match document.row_and_col_to_index(line, col, &text) {
       Ok(i) => i,
       Err(_) => return Ok(None),
     };
@@ -540,7 +551,8 @@ impl LanguageServer for Backend {
       return Ok(None);
     }
 
-    let (start_line, start_col) = match document.index_to_row_and_col(token_start) {
+    let (start_line, start_col) =
+      match document.index_to_row_and_col(token_start, &text) {
       Ok(p) => p,
       Err(_) => return Ok(None),
     };
@@ -604,12 +616,14 @@ impl LanguageServer for Backend {
       .row_and_col_to_index(
         start_params.position.line as usize,
         start_params.position.character as usize,
+        &text,
       )
       .map_err(|_| Error::invalid_params("invalid start position"))?;
     let end_index = document
       .row_and_col_to_index(
         end_params.position.line as usize,
         end_params.position.character as usize,
+        &text,
       )
       .map_err(|_| Error::invalid_params("invalid end position"))?;
 
@@ -619,9 +633,9 @@ impl LanguageServer for Backend {
           document.expand_selection(&(start_index..end_index));
         if let Some(sel) = new_selection {
           let (start_row, start_col) =
-            document.index_to_row_and_col(sel.start).unwrap_or((0, 0));
+            document.index_to_row_and_col(sel.start, &text).unwrap_or((0, 0));
           let (end_row, end_col) =
-            document.index_to_row_and_col(sel.end).unwrap_or((0, 0));
+            document.index_to_row_and_col(sel.end, &text).unwrap_or((0, 0));
           Ok(Some(
             serde_json::to_value([start_row, start_col, end_row, end_col])
               .unwrap(),
@@ -634,13 +648,13 @@ impl LanguageServer for Backend {
         let new_index =
           document.move_cursor_to_start(&(start_index..end_index));
         let (row, col) =
-          document.index_to_row_and_col(new_index).unwrap_or((0, 0));
+          document.index_to_row_and_col(new_index, &text).unwrap_or((0, 0));
         Ok(Some(serde_json::to_value([row, col]).unwrap()))
       }
       "easl.moveCursorToEnd" => {
         let new_index = document.move_cursor_to_end(&(start_index..end_index));
         let (row, col) =
-          document.index_to_row_and_col(new_index).unwrap_or((0, 0));
+          document.index_to_row_and_col(new_index, &text).unwrap_or((0, 0));
         Ok(Some(serde_json::to_value([row, col]).unwrap()))
       }
       _ => Err(Error::method_not_found()),
