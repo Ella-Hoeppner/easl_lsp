@@ -9,10 +9,11 @@ cargo build --release && cd vscode_client/easl-language-client && npm run build 
 
 ## Features
 
-- **Diagnostics** – parse errors and type errors underlined as you type
-- **Hover** – shows the inferred type of any expression (move cursor over it)
+- **Diagnostics** – parse and compile errors underlined as you type. Imports are followed, using the unsaved contents of open files; an error inside an imported file is shown on the `import` that brings it in, linking to its location
+- **Hover** – shows the inferred type of the expression under the cursor
+- **Completion** – builtins and keywords, names written in the file, and every name it can refer to through its imports (`geo/Point`, `geo/Shape/Circle`, ...), with kind icons. Fuzzy-matched by the editor. (VS Code only suggests as you type when `editor.quickSuggestions` allows it; otherwise use `ctrl+space`)
 - **Formatting** – Format Document (`shift+alt+f`) reformats the whole file
-- **Rainbow bracket coloring** – depth-colored `()`, `[]`, `{}` via semantic tokens
+- **Syntax coloring** – keywords, numbers, strings, comments, and depth-colored `()`, `[]`, `{}` via semantic tokens
 - **Bracket matching & auto-close** – `(` inserts `()`, `[` inserts `[]`, `{` inserts `{}`
 - **Structural editing:**
   - `ctrl+w` – expand selection to enclosing form
