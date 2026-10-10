@@ -103,6 +103,39 @@ async function moveCursorToEnd(): Promise<void> {
   }
 }
 
+type RangeArray = [number, number, number, number];
+
+function toRange([startLine, startCol, endLine, endCol]: RangeArray) {
+  return new vscode.Range(
+    new vscode.Position(startLine, startCol),
+    new vscode.Position(endLine, endCol)
+  );
+}
+
+// Swaps the form at the selection with its next or previous sibling.
+async function moveForm(forward: boolean): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return;
+  try {
+    const result = (await sendSelectionCommand(
+      forward ? 'easl.moveFormForward' : 'easl.moveFormBackward',
+      editor
+    )) as { range: RangeArray; newText: string; selection: RangeArray } | null;
+    if (result) {
+      const applied = await editor.edit((builder) =>
+        builder.replace(toRange(result.range), result.newText)
+      );
+      if (applied) {
+        const selection = toRange(result.selection);
+        editor.selection = new vscode.Selection(selection.start, selection.end);
+        editor.revealRange(selection);
+      }
+    }
+  } catch (error) {
+    outputChannel.appendLine(`moveForm error: ${error}`);
+  }
+}
+
 // --- Activation ---
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -130,7 +163,13 @@ export function activate(context: vscode.ExtensionContext): void {
       'easl.moveCursorToStart',
       moveCursorToStart
     ),
-    vscode.commands.registerCommand('easl.moveCursorToEnd', moveCursorToEnd)
+    vscode.commands.registerCommand('easl.moveCursorToEnd', moveCursorToEnd),
+    vscode.commands.registerCommand('easl.moveFormForward', () =>
+      moveForm(true)
+    ),
+    vscode.commands.registerCommand('easl.moveFormBackward', () =>
+      moveForm(false)
+    )
   );
 
   // Apply rainbow encloser colors to the user's global settings so they

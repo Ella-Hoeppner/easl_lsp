@@ -2,6 +2,7 @@ mod analysis;
 mod completion;
 mod server;
 mod source;
+mod structural;
 mod syntax;
 
 use tower_lsp::{LspService, Server};

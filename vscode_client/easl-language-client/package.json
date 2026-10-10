@@ -23,6 +23,13 @@
         "configuration": "./language-configuration.json"
       }
     ],
+    "grammars": [
+      {
+        "language": "easl",
+        "scopeName": "source.easl",
+        "path": "./syntaxes/easl.tmLanguage.json"
+      }
+    ],
     "semanticTokenTypes": [
       {
         "id": "encloserD0",
@@ -72,6 +79,14 @@
       {
         "command": "easl.moveCursorToEnd",
         "title": "Easl: Move Cursor to End of Current Form"
+      },
+      {
+        "command": "easl.moveFormForward",
+        "title": "Easl: Move Form Forward"
+      },
+      {
+        "command": "easl.moveFormBackward",
+        "title": "Easl: Move Form Backward"
       }
     ],
     "keybindings": [
@@ -89,10 +104,20 @@
         "command": "easl.moveCursorToEnd",
         "key": "ctrl+d",
         "when": "editorTextFocus && editorLangId == easl"
+      },
+      {
+        "command": "easl.moveFormForward",
+        "key": "ctrl+shift+d",
+        "when": "editorTextFocus && editorLangId == easl"
+      },
+      {
+        "command": "easl.moveFormBackward",
+        "key": "ctrl+shift+a",
+        "when": "editorTextFocus && editorLangId == easl"
       }
     ]
   },
-  "files": ["language-configuration.json", "LICENSE", "out/**/*"],
+  "files": ["language-configuration.json", "LICENSE", "out/**/*", "syntaxes/**/*"],
   "scripts": {
     "build": "webpack --mode production && node build.js",
     "vscode:prepublish": "npm run build",

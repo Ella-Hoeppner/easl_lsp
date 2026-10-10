@@ -1,0 +1,33 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Easl",
+  "scopeName": "source.easl",
+  "comment": "Only strings and comments. VS Code's bracket matching and colorization skip brackets inside them, which it can only know from this grammar (the language server's semantic tokens color the rest).",
+  "patterns": [
+    { "include": "#block-comment" },
+    { "include": "#line-comment" },
+    { "include": "#string" }
+  ],
+  "repository": {
+    "block-comment": {
+      "name": "comment.block.easl",
+      "begin": ";\\*",
+      "end": "\\*;"
+    },
+    "line-comment": {
+      "name": "comment.line.semicolon.easl",
+      "match": ";.*$"
+    },
+    "string": {
+      "name": "string.quoted.double.easl",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.easl",
+          "match": "\\\\(?:.|$)"
+        }
+      ]
+    }
+  }
+}

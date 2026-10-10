@@ -126,7 +126,7 @@ dependencies = [
 [[package]]
 name = "easl"
 version = "0.0.0"
-source = "git+https://github.com/Ella-Hoeppner/easl.git#a47b77ecaebe8f44b2a415395a19531c3f80e61d"
+source = "git+https://github.com/Ella-Hoeppner/easl.git#997edf41af90f31dd69c81dab78ab71259e703b3"
 dependencies = [
  "arc-swap",
  "fsexp",

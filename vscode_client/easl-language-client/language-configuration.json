@@ -1,7 +1,8 @@
 {
   "wordPattern": "[^\\s\\(\\)\\[\\]\\{\\};\"|]+",
   "comments": {
-    "lineComment": ";"
+    "lineComment": ";",
+    "blockComment": [";*", "*;"]
   },
   "brackets": [
     ["(", ")"],

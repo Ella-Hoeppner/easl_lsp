@@ -1,4 +1,4 @@
-WIP Language Server and VS Code language client for [easl](https://github.com/Ella-Hoeppner/easl), a Lisp-like shader language that compiles to WGSL.
+Language Server and VS Code language client for [easl](https://github.com/Ella-Hoeppner/easl).
 
 ## VS Code Setup
 
@@ -9,20 +9,14 @@ cargo build --release && cd vscode_client/easl-language-client && npm run build 
 
 ## Features
 
-- **Diagnostics** – parse and compile errors underlined as you type. Imports are followed, using the unsaved contents of open files; an error inside an imported file is shown on the `import` that brings it in, linking to its location
-- **Hover** – shows the inferred type of the expression under the cursor
-- **Completion** – builtins and keywords, names written in the file, and every name it can refer to through its imports (`geo/Point`, `geo/Shape/Circle`, ...), with kind icons. Fuzzy-matched by the editor. (VS Code only suggests as you type when `editor.quickSuggestions` allows it; otherwise use `ctrl+space`)
-- **Formatting** – Format Document (`shift+alt+f`) reformats the whole file
-- **Syntax coloring** – keywords, numbers, strings, comments, and depth-colored `()`, `[]`, `{}` via semantic tokens
-- **Bracket matching & auto-close** – `(` inserts `()`, `[` inserts `[]`, `{` inserts `{}`
+- **Diagnostics** – errors are underlined as you type. Imports are followed using the unsaved contents of open files, and an error inside an imported file is shown on the `import` that brings it in, linking to where it is.
+- **Hover** – over an expression, its inferred type; over the name of a function, type, variant, or top-level variable (where it's defined or where it's used), its declaration, with every overload of an overloaded function. Imported names are shown the way the file writes them (`geo/Point` for a file imported as `geo`).
+- **Go to definition** – `cmd`-click (or `F12`) on a name jumps to its definition: a function, type, variant, or top-level variable in whichever file it's in, or a local variable or parameter.
+- **Completion** – suggests builtins, keywords, the names used in the file, and everything reachable through its imports (`geo/Point`, `geo/Shape/Circle`, ...), fuzzy-matched as you type.
+- **Formatting** – Format Document (`shift+alt+f`) reformats the whole file.
+- **Syntax highlighting** – keywords, numbers, strings, and comments, with brackets colored by nesting depth.
+- **Bracket matching & auto-close** – `(` inserts `()`, `[` inserts `[]`, `{` inserts `{}`.
 - **Structural editing:**
-  - `ctrl+w` – expand selection to enclosing form
-  - `ctrl+a` – move cursor to start of current form
-  - `ctrl+d` – move cursor to end of current form
-
-## To do
-
-- Move selected form forward/backward in its parent (`ctrl+shift+a`/`d`)
-- Go-to-definition on cmd-click for functions and types
-- Hovering over a top-level definition name should show the full type/function signature
-- Types with generics are sometimes displayed incorrectly (base type only, no generic args)
+  - `ctrl+w` – expand the selection to the enclosing form
+  - `ctrl+a` / `ctrl+d` – move the cursor to the start / end of the current form
+  - `ctrl+shift+a` / `ctrl+shift+d` – move the current form backward / forward past its neighbor

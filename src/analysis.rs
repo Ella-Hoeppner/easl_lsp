@@ -17,7 +17,8 @@ use easl::{
   compiler::{
     builtins::built_in_macros,
     error::{CompileError, ErrorLog},
-    modules::NameKind,
+    info::{definition_signatures, local_references},
+    modules::{MainFileIndex, NameKind, WrittenNames},
     program::{CompilerTarget, Program},
     types::{TypeDescription, TypeState, TypeStateDescription},
   },
@@ -52,9 +53,31 @@ pub struct TypeHint {
   pub description: String,
 }
 
+/// A top-level definition: where its name is written, and its declaration.
+#[derive(Clone)]
+pub struct Definition {
+  pub location: Location,
+  pub signature: Option<String>,
+}
+
+/// A name in the analyzed document that refers to top-level definitions
+/// (several for an overloaded function).
+pub struct Reference {
+  pub span: Range<usize>,
+  pub definitions: Vec<Definition>,
+}
+
+/// The name of a definition written in the analyzed document.
+pub struct DefinitionName {
+  pub span: Range<usize>,
+  pub signature: Option<String>,
+}
+
 pub struct Analysis {
   pub diagnostics: Vec<Diagnostic>,
   pub type_hints: Vec<TypeHint>,
+  pub references: Vec<Reference>,
+  pub definition_names: Vec<DefinitionName>,
   /// The canonical paths of every file the document imports, directly or
   /// not: a change to any of them changes this analysis.
   pub dependencies: HashSet<PathBuf>,
@@ -78,6 +101,8 @@ pub fn analyze(input: &AnalysisInput) -> Analysis {
           vec![],
         )],
         type_hints: vec![],
+        references: vec![],
+        definition_names: vec![],
         dependencies: HashSet::new(),
         names: None,
       }
@@ -131,19 +156,26 @@ fn load(input: &AnalysisInput) -> Loaded {
 fn analyze_unguarded(input: &AnalysisInput) -> Analysis {
   let mut type_hints = vec![];
   let mut names = None;
+  let mut index = MainFileIndex::default();
+  let mut signatures = vec![];
+  let mut local_bindings = vec![];
   let (documents, errors) = match load(input) {
     Loaded::ParseFailures(documents) => (documents, ErrorLog::new()),
     Loaded::LoadErrors(documents, errors) => (documents, errors),
     Loaded::Loaded(documents) => {
       let (mut program, mut errors) =
         Program::from_easl_documents(&documents, built_in_macros());
+      index = program.main_file_index.clone();
       names = Some(
-        program
-          .main_file_names
+        index
+          .names
           .iter()
           .map(|(name, kind)| (name.to_string(), *kind))
           .collect(),
       );
+      // Validation rewrites the definitions, so they're described first.
+      signatures = definition_signatures(&program, &documents);
+      local_bindings = local_references(&program);
       if errors.is_empty() {
         errors = program.validate_raw_program(CompilerTarget::WGSL);
         type_hints = gather_type_hints(&program);
@@ -173,9 +205,64 @@ fn analyze_unguarded(input: &AnalysisInput) -> Analysis {
     )
   });
   diagnostics.dedup();
+  // Names are shown the way the document writes them.
+  let written = |text: &str| written_names(text, &index.written_names);
+  for diagnostic in diagnostics.iter_mut() {
+    diagnostic.message = written(&diagnostic.message);
+    for related in diagnostic.related_information.iter_mut().flatten() {
+      related.message = written(&related.message);
+    }
+  }
+  for hint in type_hints.iter_mut() {
+    hint.description = written(&hint.description);
+  }
+  for (_, signature) in signatures.iter_mut() {
+    *signature = written(signature);
+  }
+  let definition = |position: &DocumentPosition| -> Option<Definition> {
+    Some(Definition {
+      location: files
+        .location(&(*position.path.first()?, position.span.clone()))?,
+      signature: signature_at(&signatures, position),
+    })
+  };
+  let local_references =
+    local_bindings.iter().filter_map(|(position, binding)| {
+      if position.path.first() != Some(&0) {
+        return None;
+      }
+      Some(Reference {
+        span: position.span.clone(),
+        definitions: vec![Definition {
+          location: files
+            .location(&(*binding.path.first()?, binding.span.clone()))?,
+          signature: None,
+        }],
+      })
+    });
+  let references = index
+    .references
+    .iter()
+    .map(|(position, definitions)| Reference {
+      span: position.span.clone(),
+      definitions: definitions.iter().filter_map(definition).collect(),
+    })
+    .chain(local_references)
+    .filter(|reference| !reference.definitions.is_empty())
+    .collect();
+  let definition_names = index
+    .definitions
+    .iter()
+    .map(|position| DefinitionName {
+      span: position.span.clone(),
+      signature: signature_at(&signatures, position),
+    })
+    .collect();
   Analysis {
     diagnostics,
     type_hints,
+    references,
+    definition_names,
     dependencies: documents
       .sources
       .iter()
@@ -184,6 +271,52 @@ fn analyze_unguarded(input: &AnalysisInput) -> Analysis {
       .collect(),
     names,
   }
+}
+
+/// `text` with each internal name in `written` replaced by how the document
+/// writes it. Internal names that differ from their written names contain
+/// `/`, so ordinary words are never replaced.
+fn written_names(text: &str, written: &WrittenNames) -> String {
+  if written.is_empty() {
+    return text.to_string();
+  }
+  let mut result = String::with_capacity(text.len());
+  let mut token = String::new();
+  let flush = |token: &mut String, result: &mut String| {
+    match written.get(token.as_str()) {
+      Some(name) => result.push_str(name),
+      None => result.push_str(token),
+    }
+    token.clear();
+  };
+  for c in text.chars() {
+    if c.is_whitespace() || "()[]{}`\"',:".contains(c) {
+      flush(&mut token, &mut result);
+      result.push(c);
+    } else {
+      token.push(c);
+    }
+  }
+  flush(&mut token, &mut result);
+  result
+}
+
+/// The declaration of the definition whose name is at `position`: the
+/// signature keyed by the smallest span containing it (a variant's key is
+/// the variant, which contains its name).
+fn signature_at(
+  signatures: &[(DocumentPosition, String)],
+  position: &DocumentPosition,
+) -> Option<String> {
+  signatures
+    .iter()
+    .filter(|(key, _)| {
+      key.path.first() == position.path.first()
+        && key.span.start <= position.span.start
+        && position.span.end <= key.span.end
+    })
+    .min_by_key(|(key, _)| key.span.len())
+    .map(|(_, signature)| signature.clone())
 }
 
 fn gather_type_hints(program: &Program) -> Vec<TypeHint> {
@@ -551,5 +684,181 @@ mod tests {
     assert!(analysis.type_hints.iter().any(|hint| {
       hint.span == (call..call + "(g 1u)".len()) && hint.description == "u32"
     }));
+  }
+
+  #[test]
+  fn references_and_declarations() {
+    let files = project(&[
+      (
+        "lib.easl",
+        "(struct (Pair T U)
+  first: T
+  second: U)
+
+(defn (swap T U) [p: (Pair T U)]: (Pair U T)
+  (Pair p.second p.first))
+
+(enum Mode
+  Bright
+  (Dim f32))
+",
+      ),
+      (
+        "main.easl",
+        "(import lib \"lib.easl\")
+
+(defn helper [@var x: f32]: f32
+  x)
+
+(defn f []: f32
+  (let [p (lib/swap (lib/Pair 1. 2u))
+        o (Some 1.)]
+    (helper p.second)))
+
+(defn g []: lib/Mode
+  (lib/Mode/Dim 0.5))
+",
+      ),
+    ]);
+    let analysis = analyze_file(&files["main.easl"], HashMap::new());
+    assert_eq!(messages(&analysis), Vec::<String>::new());
+    let text = fs::read_to_string(&files["main.easl"]).unwrap();
+    let reference = |name: &str| {
+      let start = text.find(name).unwrap();
+      analysis
+        .references
+        .iter()
+        .find(|reference| reference.span == (start..start + name.len()))
+        .unwrap_or_else(|| panic!("no reference at {name}"))
+    };
+    let swap = reference("lib/swap");
+    assert_eq!(
+      swap.definitions[0].location.uri,
+      Url::from_file_path(&files["lib.easl"]).unwrap()
+    );
+    assert_eq!(swap.definitions[0].location.range.start.line, 4);
+    assert_eq!(
+      swap.definitions[0].signature.as_deref(),
+      Some("(defn (swap T U) [p: (lib/Pair T U)]: (lib/Pair U T))")
+    );
+    assert_eq!(
+      reference("lib/Mode/Dim").definitions[0]
+        .signature
+        .as_deref(),
+      Some("(enum Mode\n  Bright\n  (Dim f32))")
+    );
+    let helper = "(defn helper [@var x: f32]: f32)";
+    let helper_call = text.rfind("helper").unwrap();
+    assert!(analysis.references.iter().any(|reference| {
+      reference.span == (helper_call..helper_call + "helper".len())
+        && reference.definitions[0].signature.as_deref() == Some(helper)
+    }));
+    let helper_definition = text.find("helper").unwrap();
+    assert!(analysis.definition_names.iter().any(|name| {
+      name.span == (helper_definition..helper_definition + "helper".len())
+        && name.signature.as_deref() == Some(helper)
+    }));
+    let hint_of = |name: &str| {
+      let start = text.find(name).unwrap();
+      analysis
+        .type_hints
+        .iter()
+        .find(|hint| hint.span == (start..start + name.len()))
+        .map(|hint| hint.description.clone())
+    };
+    assert_eq!(hint_of("p (").as_deref(), None);
+    let p = text.find("[p ").unwrap() + 1;
+    assert!(analysis.type_hints.iter().any(|hint| {
+      hint.span == (p..p + 1) && hint.description == "(lib/Pair u32 f32)"
+    }));
+    assert_eq!(hint_of("(Some 1.)").as_deref(), Some("(Option f32)"));
+  }
+
+  #[test]
+  fn locals_and_written_names() {
+    let files = project(&[
+      (
+        "geometry.easl",
+        "(struct Point
+  x: f32
+  y: f32)
+
+(defn norm [p: Point]: f32
+  (+ p.x p.y))
+",
+      ),
+      (
+        "main.easl",
+        "(import geo \"geometry.easl\")
+
+(defn f [scale: f32]: f32
+  (let [p (geo/Point 1. 2.)
+        total (+ (geo/norm p) scale)]
+    (match (Some total)
+      (Some t) (* t scale)
+      None 0.)))
+
+(defn g []: f32
+  (let [@var sum 0.]
+    (for [i 0u (< i 3u) (+= i 1u)]
+      (+= sum (f32 i)))
+    sum))
+",
+      ),
+    ]);
+    let analysis = analyze_file(&files["main.easl"], HashMap::new());
+    assert_eq!(messages(&analysis), Vec::<String>::new());
+    let text = fs::read_to_string(&files["main.easl"]).unwrap();
+    let nth =
+      |needle: &str, n: usize| text.match_indices(needle).nth(n).unwrap().0;
+    // The definition each local reference leads to, as a byte offset.
+    let target = |start: usize, len: usize| {
+      let source = SourceText::new(text.clone());
+      let reference = analysis
+        .references
+        .iter()
+        .find(|reference| reference.span == (start..start + len))
+        .unwrap_or_else(|| panic!("no reference at {start}"));
+      source
+        .offset(reference.definitions[0].location.range.start)
+        .unwrap()
+    };
+    assert_eq!(target(nth("scale", 1), 5), nth("scale", 0));
+    assert_eq!(target(nth("scale", 2), 5), nth("scale", 0));
+    assert_eq!(target(nth("p)", 0), 1), nth("[p ", 0) + 1);
+    assert_eq!(target(nth("t scale", 0), 1), nth("t)", 0));
+    assert_eq!(target(nth("i)", 0), 1), nth("[i ", 0) + 1);
+    assert_eq!(target(nth("sum", 2), 3), nth("sum", 0));
+    // Imported names are shown as the document writes them.
+    let p = nth("[p ", 0) + 1;
+    assert!(analysis.type_hints.iter().any(|hint| {
+      hint.span == (p..p + 1) && hint.description == "geo/Point"
+    }));
+    let norm = nth("geo/norm", 0);
+    assert_eq!(
+      analysis
+        .references
+        .iter()
+        .find(|reference| reference.span.start == norm)
+        .unwrap()
+        .definitions[0]
+        .signature
+        .as_deref(),
+      Some("(defn norm [p: geo/Point]: f32)")
+    );
+    let unsaved = HashMap::from([(
+      files["main.easl"].clone(),
+      "(import geo \"geometry.easl\")\n\n(defn h []: f32\n  (geo/Point 1. 2.))\n"
+        .to_string(),
+    )]);
+    let error = analyze_file(&files["main.easl"], unsaved);
+    assert!(
+      messages(&error)
+        .iter()
+        .any(|message| message.contains("geo/Point")
+          && !message.contains("geometry/Point")),
+      "{:?}",
+      messages(&error)
+    );
   }
 }

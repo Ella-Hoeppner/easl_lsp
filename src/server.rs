@@ -3,6 +3,7 @@
 
 use std::{
   collections::{HashMap, HashSet},
+  ops::Range,
   path::PathBuf,
   sync::Arc,
   time::Duration,
@@ -21,8 +22,9 @@ use tower_lsp::{
     DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
     DidChangeWatchedFilesRegistrationOptions, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentFormattingParams, ExecuteCommandParams,
-    FileChangeType, FileSystemWatcher, GlobPattern, Hover, HoverContents,
-    HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
+    FileChangeType, FileSystemWatcher, GlobPattern, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeParams, InitializeResult,
     InitializedParams, MarkupContent, MarkupKind, MessageType, OneOf, Position,
     Range as LspRange, Registration, SemanticTokens, SemanticTokensFullOptions,
     SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
@@ -33,9 +35,10 @@ use tower_lsp::{
 };
 
 use crate::{
-  analysis::{AnalysisInput, TypeHint, analyze},
+  analysis::{AnalysisInput, DefinitionName, Reference, TypeHint, analyze},
   completion::completion_items,
   source::SourceText,
+  structural::move_form,
   syntax::{identifiers, semantic_tokens, token_legend},
 };
 
@@ -54,9 +57,12 @@ struct OpenDocument {
   revision: u64,
   /// Counts scheduled analyses; only the latest one's results are kept.
   latest_analysis: u64,
-  /// The text revision `type_hints` were computed from.
+  /// The text revision `type_hints`, `references`, and `definition_names`
+  /// were computed from.
   analyzed_revision: Option<u64>,
   type_hints: Vec<TypeHint>,
+  references: Vec<Reference>,
+  definition_names: Vec<DefinitionName>,
   dependencies: HashSet<PathBuf>,
   /// The names the document can refer to, from the last analysis that got
   /// far enough to know them.
@@ -132,6 +138,8 @@ impl Backend {
     }
     document.analyzed_revision = Some(revision);
     document.type_hints = analysis.type_hints;
+    document.references = analysis.references;
+    document.definition_names = analysis.definition_names;
     document.dependencies = analysis.dependencies;
     if let Some(names) = analysis.names {
       document.names = names;
@@ -186,6 +194,8 @@ impl Backend {
             latest_analysis: 0,
             analyzed_revision: None,
             type_hints: vec![],
+            references: vec![],
+            definition_names: vec![],
             dependencies: HashSet::new(),
             names: vec![],
           });
@@ -199,6 +209,22 @@ impl Backend {
       self.schedule_dependents(&path).await;
     }
   }
+}
+
+/// The item with the smallest span containing `offset` (the cursor may be
+/// just past the end of a name).
+fn innermost<T>(
+  items: &[T],
+  offset: usize,
+  span: impl Fn(&T) -> &Range<usize>,
+) -> Option<&T> {
+  items
+    .iter()
+    .filter(|item| {
+      let span = span(item);
+      span.start <= offset && offset <= span.end
+    })
+    .min_by_key(|item| span(item).len())
 }
 
 fn position_params_offset(
@@ -219,6 +245,7 @@ impl LanguageServer for Backend {
           TextDocumentSyncKind::FULL,
         )),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
+        definition_provider: Some(OneOf::Left(true)),
         semantic_tokens_provider: Some(
           SemanticTokensServerCapabilities::SemanticTokensOptions(
             SemanticTokensOptions {
@@ -339,24 +366,84 @@ impl LanguageServer for Backend {
     else {
       return Ok(None);
     };
-    // Types are only shown for the text they were inferred from.
+    // Results are only shown for the text they were computed from.
     if document.analyzed_revision != Some(document.revision) {
       return Ok(None);
     }
     let offset = position_params_offset(&document.source, &position_params)?;
-    // The innermost expression at the cursor, preferring fully-known types.
+    let hover = |span: &Range<usize>, declarations: Vec<&str>| {
+      Some(Hover {
+        contents: HoverContents::Markup(MarkupContent {
+          kind: MarkupKind::Markdown,
+          value: declarations
+            .iter()
+            .map(|declaration| format!("```easl\n{declaration}\n```"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        }),
+        range: Some(document.source.range(span)),
+      })
+    };
+    // A name referring to definitions shows their declarations (each
+    // overload's, for an overloaded function).
+    if let Some(reference) =
+      innermost(&document.references, offset, |r| &r.span)
+    {
+      let mut declarations: Vec<&str> = reference
+        .definitions
+        .iter()
+        .filter_map(|definition| definition.signature.as_deref())
+        .collect();
+      declarations.dedup();
+      if !declarations.is_empty() {
+        return Ok(hover(&reference.span, declarations));
+      }
+    }
+    if let Some(name) =
+      innermost(&document.definition_names, offset, |name| &name.span)
+      && let Some(signature) = &name.signature
+    {
+      return Ok(hover(&name.span, vec![signature]));
+    }
+    // Otherwise, the type of the innermost expression at the cursor,
+    // preferring fully-known types.
     let hint = document
       .type_hints
       .iter()
       .filter(|hint| hint.span.contains(&offset))
       .min_by_key(|hint| (hint.span.len(), !hint.fully_known));
-    Ok(hint.map(|hint| Hover {
-      contents: HoverContents::Markup(MarkupContent {
-        kind: MarkupKind::Markdown,
-        value: format!("```easl\n{}\n```", hint.description),
-      }),
-      range: Some(document.source.range(&hint.span)),
-    }))
+    Ok(hint.and_then(|hint| hover(&hint.span, vec![&hint.description])))
+  }
+
+  async fn goto_definition(
+    &self,
+    params: GotoDefinitionParams,
+  ) -> Result<Option<GotoDefinitionResponse>> {
+    let position_params = params.text_document_position_params;
+    let documents = self.documents.read().await;
+    let Some(document) = documents.get(&position_params.text_document.uri)
+    else {
+      return Ok(None);
+    };
+    if document.analyzed_revision != Some(document.revision) {
+      return Ok(None);
+    }
+    let offset = position_params_offset(&document.source, &position_params)?;
+    let Some(reference) = innermost(&document.references, offset, |r| &r.span)
+    else {
+      return Ok(None);
+    };
+    let mut locations = reference
+      .definitions
+      .iter()
+      .map(|definition| definition.location.clone());
+    Ok(match (locations.next(), locations.next()) {
+      (None, _) => None,
+      (Some(location), None) => Some(GotoDefinitionResponse::Scalar(location)),
+      (Some(first), Some(second)) => Some(GotoDefinitionResponse::Array(
+        [first, second].into_iter().chain(locations).collect(),
+      )),
+    })
   }
 
   async fn semantic_tokens_full(
@@ -474,6 +561,32 @@ impl LanguageServer for Backend {
       "easl.moveCursorToEnd" => Some(position_json(
         source.position(document.move_cursor_to_end(&selection)),
       )),
+      command @ ("easl.moveFormForward" | "easl.moveFormBackward") => {
+        move_form(
+          source.text(),
+          &document.syntax_trees,
+          &selection,
+          command == "easl.moveFormForward",
+        )
+        .map(|form_move| {
+          let range_json = |range: LspRange| {
+            serde_json::json!([
+              range.start.line,
+              range.start.character,
+              range.end.line,
+              range.end.character
+            ])
+          };
+          let mut edited = source.text().to_string();
+          edited.replace_range(form_move.replaced.clone(), &form_move.new_text);
+          serde_json::json!({
+            "range": range_json(source.range(&form_move.replaced)),
+            "newText": form_move.new_text,
+            "selection":
+              range_json(SourceText::new(edited).range(&form_move.selection)),
+          })
+        })
+      }
       _ => return Err(Error::method_not_found()),
     })
   }

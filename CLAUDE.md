@@ -13,10 +13,13 @@ src/
   source.rs     # SourceText: byte offsets <-> LSP positions (UTF-16)
   syntax.rs     # semantic tokens and identifier collection (parse-only)
   completion.rs # completion candidates and their kinds
+  structural.rs # structural edits (moving a form past its neighbor)
 vscode_client/
   easl-language-client/
     src/extension.ts          # VS Code extension entry point
     language-configuration.json  # bracket pairs, auto-close, comments
+    syntaxes/easl.tmLanguage.json  # TextMate grammar: strings and comments only,
+                                   # so VS Code's bracket matching skips them
     package.json
     webpack.config.js
     build.js                  # copies the Rust binary into out/
@@ -61,9 +64,30 @@ per-document analysis exactly right.
   (`Program::from_easl_documents`) succeeded, like the CLI
 - Type hints (for hover) come from `gather_type_annotations` after
   validation, restricted to positions in the analyzed document
-- `names` is `Program::main_file_names`: every bare name and path
-  (`geo/Point`, `geo/Shape/Circle`) the document can refer to, with its
-  `NameKind`, for completion
+- From `Program::main_file_index` (filled by module resolution, so
+  available even when validation fails):
+  - `names`: every bare name and path (`geo/Point`, `geo/Shape/Circle`) the
+    document can refer to, with its `NameKind`, for completion
+  - `references`: each name in the document referring to top-level
+    definitions, with the definitions' name locations (every overload's) —
+    for go-to-definition and hover
+  - `definition_names`: the names of the document's own definitions
+  - `written_names`: how the document writes each reachable definition
+    whose internal name differs (`geometry/Point` → `geo/Point`). Type
+    hints, declarations, and diagnostic messages are passed through
+    `written_names` (token-wise replacement; differing internal names always
+    contain `/`, so ordinary words are never touched)
+- Local variables come from `easl::compiler::info::local_references` (also
+  computed before validation, which renames bindings): each name in a body
+  referring to a parameter, `let` binding, lambda parameter, `match`
+  binding, or `for` variable, with the binding's position. They join
+  `references` with no declaration, so hovering a local still shows its
+  type
+- Declarations shown on hover come from `easl::compiler::info::
+  definition_signatures`, computed **before** validation (which rewrites
+  definitions), keyed by each definition's name position; a definition's
+  declaration is the one whose key is the smallest span containing its name
+  (a variant's key is the whole variant)
 - A compiler panic is caught and shown as an "internal compiler error"
   diagnostic
 - A document that isn't a file on disk (untitled) is compiled alone
@@ -105,7 +129,8 @@ count bytes.
 | Capability | Method |
 |---|---|
 | Text sync (FULL) | `did_open`, `did_change`, `did_close` |
-| Hover | `textDocument/hover` — the innermost typed expression, preferring fully known types |
+| Hover | `textDocument/hover` — on a name referring to definitions, their declarations; on a definition's own name, its declaration; otherwise the innermost typed expression's type, preferring fully known types |
+| Go to definition | `textDocument/definition` — the definitions a name refers to (several for overloads), in any file, or a local's binding |
 | Semantic tokens | `textDocument/semanticTokens/full` |
 | Formatting | `textDocument/formatting` (skipped when the document doesn't parse) |
 | Completion | `textDocument/completion` (`completion.rs`) — every candidate on every request, for the editor to fuzzy-filter: `names` from the last analysis (with their kinds), words written in the document (locals, mostly), and builtins (functions, types, `Option`'s variants, macros, keywords; operator-only names and `$`-internal names left out). `sort_text` ranks them in that order. Triggered by `-` and `/` |
@@ -140,6 +165,13 @@ Handled in `execute_command`. Each command takes one argument: a JSON array
 - `easl.expandSelection` → returns `[startLine, startCol, endLine, endCol]`
 - `easl.moveCursorToStart` → returns `[line, col]`
 - `easl.moveCursorToEnd` → returns `[line, col]`
+- `easl.moveFormForward` / `easl.moveFormBackward` → returns
+  `{range: [sl, sc, el, ec], newText, selection: [sl, sc, el, ec]}` (the
+  selection is in the edited text), or null. Swaps the innermost form
+  containing the selection whose parent is a bracketed form (or the
+  document) with its next/previous non-comment sibling — so a form under an
+  operator (`@cpu (defn …)`, `x: f32`) moves with its operator, and a cursor
+  on a word moves that word within its list (`structural::move_form`)
 
 The extension calls these via `client.sendRequest('workspace/executeCommand', {...})`.
 
@@ -148,7 +180,8 @@ The extension calls these via `client.sendRequest('workspace/executeCommand', {.
 `cargo test` runs unit tests for `SourceText` and `syntax`, and analysis
 tests that write small multi-file projects to a temp directory (imports
 resolving, imported-file errors landing on the import, unsaved buffers
-overriding files, missing/unparsable imports, type hints).
+overriding files, missing/unparsable imports, type hints, references and
+declarations), completion tests, and `structural` tests.
 
 ## VS Code extension (`vscode_client/easl-language-client/src/extension.ts`)
 
@@ -157,12 +190,7 @@ overriding files, missing/unparsable imports, type hints).
   by `LanguageClient` — no special code needed in the extension for these.
 - Structural editing commands are registered manually with `registerCommand` and
   call the server via `client.sendRequest('workspace/executeCommand', {...})`.
+  The move-form commands apply the returned edit with `editor.edit`, then
+  set the selection.
 - Rainbow bracket colors are applied once to `editor.semanticTokenColorCustomizations`
   in the user's global settings.
-
-## Known issues / future work
-
-- Types with generics sometimes display incorrectly (base type only, no generic args)
-- Move selected form forward/backward in its parent (`ctrl+shift+a`/`d`)
-- Go-to-definition on cmd-click for functions and types
-- Hovering over a top-level definition name should show the full type/function signature
