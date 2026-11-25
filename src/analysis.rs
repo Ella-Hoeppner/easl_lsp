@@ -700,7 +700,8 @@ mod tests {
 
 (enum Mode
   Bright
-  (Dim f32))
+  (Dim f32)
+  (Gain f32 bool))
 ",
       ),
       (
@@ -717,6 +718,9 @@ mod tests {
 
 (defn g []: lib/Mode
   (lib/Mode/Dim 0.5))
+
+(defn h []: lib/Mode
+  (lib/Mode/Gain 0.5 true))
 ",
       ),
     ]);
@@ -741,11 +745,28 @@ mod tests {
       swap.definitions[0].signature.as_deref(),
       Some("(defn (swap T U) [p: (lib/Pair T U)]: (lib/Pair U T))")
     );
+    let mode = "(enum Mode\n  Bright\n  (Dim f32)\n  (Gain f32 bool))";
     assert_eq!(
       reference("lib/Mode/Dim").definitions[0]
         .signature
         .as_deref(),
-      Some("(enum Mode\n  Bright\n  (Dim f32))")
+      Some(mode)
+    );
+    // A variant holding several values shows its enum, never the
+    // constructor or payload struct the compiler generates for it.
+    let gain = reference("lib/Mode/Gain");
+    assert!(!gain.definitions.is_empty());
+    assert!(
+      gain
+        .definitions
+        .iter()
+        .all(|definition| definition.signature.as_deref() == Some(mode)),
+      "{:?}",
+      gain
+        .definitions
+        .iter()
+        .map(|definition| &definition.signature)
+        .collect::<Vec<_>>()
     );
     let helper = "(defn helper [@var x: f32]: f32)";
     let helper_call = text.rfind("helper").unwrap();

@@ -7,7 +7,7 @@ edition = "2024"
 serde_json = "1.0.121"
 fsexp = "0.1"
 tokio = { version = "1.38.0", features = ["rt-multi-thread", "io-std", "macros", "io-util", "time"] }
-easl = {path = "../easl"} # { git = "https://github.com/Ella-Hoeppner/easl.git" }
+easl = { version = "0.2.0" }
 tower-lsp = "0.20.0"
 
 [[bin]]

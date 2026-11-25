@@ -2,9 +2,11 @@ Language Server and VS Code language client for [easl](https://github.com/Ella-H
 
 ## VS Code Setup
 
+**Prerequisites:** Rust 1.90 or newer, Node.js with npm, VS Code's `code` command on the PATH, and `vsce` (`npm install -g @vscode/vsce`).
+
 **Build & install** (from repo root):
 ```
-cargo build --release && cd vscode_client/easl-language-client && npm run build && vsce package && code --install-extension easl-language-client-0.1.0.vsix && cd ../../
+cargo build --release && cd vscode_client/easl-language-client && npm install && npm run build && vsce package && code --install-extension easl-language-client-0.1.0.vsix && cd ../../
 ```
 
 ## Features
